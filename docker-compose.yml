@@ -1,61 +1,86 @@
 version: "3.9"
 
 services:
+
+  # ─── Infrastructure ──────────────────────────────────────────────────────────
+
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: recoverai
-      POSTGRES_PASSWORD: recoverai
       POSTGRES_DB: recoverai
+      POSTGRES_USER: recoverai
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./internal/db/migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql:ro
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./internal/db/migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U recoverai"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    # notify-keyspace-events Ex enables keyspace notifications for expired keys —
+    # required by the outage detector to auto-clear bank outage flags on TTL expiry.
+    command: redis-server --notify-keyspace-events Ex
     ports:
       - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 5s
-      retries: 10
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
   kafka:
     image: apache/kafka:3.7.0
-    ports:
-      - "9092:9092"
+    # KRaft mode — no ZooKeeper required
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Disabled — topics are created explicitly via init container below
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: 168        # 7 days
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824   # 1 GB
+    ports:
+      - "9092:9092"
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
       interval: 10s
       timeout: 10s
-      retries: 10
-
-  ai-service:
-    build: ./ai-service
-    ports:
-      - "8000:8000"
-    env_file: .env
-    depends_on:
-      - postgres
+      retries: 5
     restart: unless-stopped
+
+  # Creates all required topics once Kafka is healthy, then exits.
+  kafka-init:
+    image: apache/kafka:3.7.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Creating Kafka topics..."
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payment.events          --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payment.risk_scored     --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payment.validated_for_ai --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payment.ai_commands     --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payment.execution_results --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payment.dead_letter     --partitions 3 --replication-factor 1
+        echo "Topics created."
+    restart: on-failure
+
+  # ─── Application services ─────────────────────────────────────────────────
 
   api:
     build:
@@ -65,6 +90,8 @@ services:
     ports:
       - "8080:8080"
     env_file: .env
+    environment:
+      PORT: "8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,17 +114,38 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
       ai-service:
         condition: service_started
     restart: unless-stopped
 
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      LLM_PROVIDER: groq
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
     ports:
       - "3000:3000"
-    env_file: .env
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
     depends_on:
       - api
+    restart: unless-stopped
 
 volumes:
-  postgres_data:
+  pgdata:
