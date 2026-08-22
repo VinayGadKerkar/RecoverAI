@@ -1,0 +1,2 @@
+# TODO: Strategist system prompt
+# Cover: recovery action selection logic, RBI compliance constraints, confidence scoring

@@ -1,0 +1,9 @@
+# TODO: pin versions before first run
+fastapi
+uvicorn[standard]
+pydantic
+langchain
+langgraph
+langchain-groq
+langchain-google-genai
+httpx
