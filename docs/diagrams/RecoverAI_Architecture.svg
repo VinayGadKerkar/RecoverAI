@@ -1,0 +1,297 @@
+<svg viewBox="0 0 1100 860" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Arial, sans-serif">
+  <!-- Background -->
+  <rect width="1100" height="860" fill="#0D0D0D"/>
+
+  <!-- Title -->
+  <text x="550" y="38" text-anchor="middle" fill="#C5A028" font-size="22" font-weight="700" letter-spacing="2">RecoverAI — System Architecture</text>
+  <text x="550" y="58" text-anchor="middle" fill="#666" font-size="11">Razorpay Build · Track 03: AI Revenue Recovery · Research-Enforced v2</text>
+
+  <!-- ── LANE LABELS ─────────────────────────────── -->
+  <text x="12" y="130" fill="#444" font-size="9" font-weight="600" letter-spacing="1">INGESTION</text>
+  <text x="12" y="270" fill="#444" font-size="9" font-weight="600" letter-spacing="1">RISK</text>
+  <text x="12" y="410" fill="#444" font-size="9" font-weight="600" letter-spacing="1">VALIDATE</text>
+  <text x="12" y="530" fill="#444" font-size="9" font-weight="600" letter-spacing="1">AI</text>
+  <text x="12" y="650" fill="#444" font-size="9" font-weight="600" letter-spacing="1">EXECUTE</text>
+  <text x="12" y="790" fill="#444" font-size="9" font-weight="600" letter-spacing="1">STORE</text>
+
+  <!-- ── LANE SEPARATORS ─── -->
+  <line x1="80" y1="75" x2="1080" y2="75" stroke="#1E1E1E" stroke-width="1"/>
+  <line x1="80" y1="215" x2="1080" y2="215" stroke="#1E1E1E" stroke-width="1"/>
+  <line x1="80" y1="355" x2="1080" y2="355" stroke="#1E1E1E" stroke-width="1"/>
+  <line x1="80" y1="475" x2="1080" y2="475" stroke="#1E1E1E" stroke-width="1"/>
+  <line x1="80" y1="595" x2="1080" y2="595" stroke="#1E1E1E" stroke-width="1"/>
+  <line x1="80" y1="735" x2="1080" y2="735" stroke="#1E1E1E" stroke-width="1"/>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- INGESTION LANE -->
+  <!-- ═══════════════════════════════════════════ -->
+
+  <!-- Razorpay -->
+  <rect x="88" y="88" width="130" height="60" rx="8" fill="#1A1A1A" stroke="#C5A028" stroke-width="1.5"/>
+  <text x="153" y="112" text-anchor="middle" fill="#C5A028" font-size="11" font-weight="700">Razorpay</text>
+  <text x="153" y="127" text-anchor="middle" fill="#888" font-size="9">Test Mode Webhooks</text>
+  <text x="153" y="140" text-anchor="middle" fill="#555" font-size="8">payment.failed / captured</text>
+
+  <!-- Arrow -->
+  <line x1="218" y1="118" x2="258" y2="118" stroke="#C5A028" stroke-width="1.5" marker-end="url(#gold)"/>
+
+  <!-- Go API Gateway -->
+  <rect x="258" y="83" width="160" height="70" rx="8" fill="#1A1A1A" stroke="#4A9EFF" stroke-width="1.5"/>
+  <text x="338" y="105" text-anchor="middle" fill="#4A9EFF" font-size="11" font-weight="700">Go API Gateway</text>
+  <text x="338" y="120" text-anchor="middle" fill="#888" font-size="9">HMAC-SHA256 verify</text>
+  <text x="338" y="133" text-anchor="middle" fill="#888" font-size="9">Redis idempotency check</text>
+  <text x="338" y="146" text-anchor="middle" fill="#555" font-size="8">JWT · RBAC · Rate limit</text>
+
+  <!-- Arrow -->
+  <line x1="418" y1="118" x2="458" y2="118" stroke="#4A9EFF" stroke-width="1.5" marker-end="url(#blue)"/>
+
+  <!-- Kafka bus -->
+  <rect x="458" y="83" width="130" height="70" rx="8" fill="#1A2A1A" stroke="#2ECC71" stroke-width="1.5"/>
+  <text x="523" y="108" text-anchor="middle" fill="#2ECC71" font-size="11" font-weight="700">Kafka</text>
+  <text x="523" y="122" text-anchor="middle" fill="#888" font-size="9">payment.events</text>
+  <text x="523" y="135" text-anchor="middle" fill="#555" font-size="8">KRaft · 3 partitions</text>
+  <text x="523" y="148" text-anchor="middle" fill="#555" font-size="8">7 day retention</text>
+
+  <!-- Dashboard -->
+  <rect x="870" y="83" width="200" height="70" rx="8" fill="#1A1A1A" stroke="#9B59B6" stroke-width="1.5"/>
+  <text x="970" y="105" text-anchor="middle" fill="#9B59B6" font-size="11" font-weight="700">Next.js Dashboard</text>
+  <text x="970" y="120" text-anchor="middle" fill="#888" font-size="9">Live polling · 5s interval</text>
+  <text x="970" y="133" text-anchor="middle" fill="#888" font-size="9">6 metric cards · Audit trail</text>
+  <text x="970" y="146" text-anchor="middle" fill="#555" font-size="8">Case detail · AI breakdown</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- RISK LANE -->
+  <!-- ═══════════════════════════════════════════ -->
+
+  <!-- Down arrow from Kafka -->
+  <line x1="523" y1="153" x2="523" y2="228" stroke="#2ECC71" stroke-width="1.5" marker-end="url(#green)"/>
+
+  <!-- Risk Engine -->
+  <rect x="388" y="228" width="272" height="100" rx="8" fill="#1A1A1A" stroke="#E67E22" stroke-width="1.5"/>
+  <text x="524" y="250" text-anchor="middle" fill="#E67E22" font-size="11" font-weight="700">Risk Engine (Go Worker)</text>
+  <text x="524" y="266" text-anchor="middle" fill="#888" font-size="9">UPI error taxonomy (11 codes · TD vs BD)</text>
+  <text x="524" y="280" text-anchor="middle" fill="#888" font-size="9">Risk scoring: amount × customer × failure type</text>
+  <text x="524" y="294" text-anchor="middle" fill="#888" font-size="9">Bank outage detection: Redis counter /5min</text>
+  <text x="524" y="308" text-anchor="middle" fill="#555" font-size="8">→ recovery_cases table · revenue.risk topic</text>
+
+  <!-- Bank outage box -->
+  <rect x="720" y="233" width="150" height="65" rx="6" fill="#1A1210" stroke="#E74C3C" stroke-width="1.2"/>
+  <text x="795" y="252" text-anchor="middle" fill="#E74C3C" font-size="10" font-weight="700">Bank Outage Detector</text>
+  <text x="795" y="267" text-anchor="middle" fill="#888" font-size="8">INCR bank_failures:{code}</text>
+  <text x="795" y="280" text-anchor="middle" fill="#888" font-size="8">Threshold: 10 fails/5min</text>
+  <text x="795" y="293" text-anchor="middle" fill="#555" font-size="8">SET outage:{code} EX 3600</text>
+
+  <!-- Arrow risk→outage -->
+  <line x1="660" y1="268" x2="720" y2="268" stroke="#E74C3C" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#red)"/>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- VALIDATE LANE -->
+  <!-- ═══════════════════════════════════════════ -->
+
+  <!-- Down arrow Risk→Validator -->
+  <line x1="524" y1="328" x2="524" y2="368" stroke="#E67E22" stroke-width="1.5" marker-end="url(#orange)"/>
+
+  <!-- Pre-Recovery Validator -->
+  <rect x="258" y="368" width="530" height="90" rx="8" fill="#111820" stroke="#4A9EFF" stroke-width="2"/>
+  <text x="523" y="388" text-anchor="middle" fill="#4A9EFF" font-size="11" font-weight="700">Pre-Recovery Validator (Go) ← NEW COMPONENT</text>
+
+  <!-- 6 checks in two rows -->
+  <rect x="270" y="396" width="120" height="24" rx="4" fill="#0D1520" stroke="#2ECC71" stroke-width="1"/>
+  <text x="330" y="412" text-anchor="middle" fill="#2ECC71" font-size="8">① Already captured?</text>
+
+  <rect x="400" y="396" width="120" height="24" rx="4" fill="#0D1520" stroke="#2ECC71" stroke-width="1"/>
+  <text x="460" y="412" text-anchor="middle" fill="#2ECC71" font-size="8">② Bank outage active?</text>
+
+  <rect x="530" y="396" width="120" height="24" rx="4" fill="#0D1520" stroke="#2ECC71" stroke-width="1"/>
+  <text x="590" y="412" text-anchor="middle" fill="#2ECC71" font-size="8">③ RBI mandate rule?</text>
+
+  <rect x="270" y="426" width="120" height="24" rx="4" fill="#0D1520" stroke="#2ECC71" stroke-width="1"/>
+  <text x="330" y="442" text-anchor="middle" fill="#2ECC71" font-size="8">④ ROI positive?</text>
+
+  <rect x="400" y="426" width="120" height="24" rx="4" fill="#0D1520" stroke="#2ECC71" stroke-width="1"/>
+  <text x="460" y="442" text-anchor="middle" fill="#2ECC71" font-size="8">⑤ Error retryable?</text>
+
+  <rect x="530" y="426" width="120" height="24" rx="4" fill="#0D1520" stroke="#2ECC71" stroke-width="1"/>
+  <text x="590" y="442" text-anchor="middle" fill="#2ECC71" font-size="8">⑥ Max retries ok?</text>
+
+  <!-- recovery.blocked branch -->
+  <rect x="870" y="368" width="200" height="55" rx="6" fill="#100D0D" stroke="#E74C3C" stroke-width="1.2"/>
+  <text x="970" y="388" text-anchor="middle" fill="#E74C3C" font-size="10" font-weight="700">recovery.blocked topic</text>
+  <text x="970" y="403" text-anchor="middle" fill="#888" font-size="8">customer_self_recovered</text>
+  <text x="970" y="416" text-anchor="middle" fill="#888" font-size="8">outage_batched · not_worth_recovering</text>
+
+  <line x1="788" y1="413" x2="870" y2="413" stroke="#E74C3C" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#red)"/>
+  <text x="829" y="407" text-anchor="middle" fill="#E74C3C" font-size="8">SKIP</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- AI LANE -->
+  <!-- ═══════════════════════════════════════════ -->
+
+  <!-- Down arrow Validator→AI -->
+  <line x1="524" y1="458" x2="524" y2="492" stroke="#4A9EFF" stroke-width="1.5" marker-end="url(#blue)"/>
+  <text x="540" y="480" fill="#4A9EFF" font-size="8">PASS</text>
+
+  <!-- AI service box -->
+  <rect x="258" y="492" width="530" height="90" rx="8" fill="#12101A" stroke="#9B59B6" stroke-width="1.5"/>
+  <text x="523" y="512" text-anchor="middle" fill="#9B59B6" font-size="11" font-weight="700">AI Recovery Service (FastAPI + LangGraph + Groq)</text>
+
+  <!-- Agent 1 -->
+  <rect x="270" y="520" width="155" height="52" rx="5" fill="#1A1525" stroke="#9B59B6" stroke-width="1"/>
+  <text x="347" y="537" text-anchor="middle" fill="#C39BD3" font-size="9" font-weight="600">Agent 1: Risk Analyst</text>
+  <text x="347" y="550" text-anchor="middle" fill="#888" font-size="8">Timing penalty (7-10PM)</text>
+  <text x="347" y="563" text-anchor="middle" fill="#888" font-size="8">TD/BD classification</text>
+
+  <!-- Arrow -->
+  <line x1="425" y1="546" x2="445" y2="546" stroke="#9B59B6" stroke-width="1" marker-end="url(#purple)"/>
+
+  <!-- Agent 2 -->
+  <rect x="445" y="520" width="155" height="52" rx="5" fill="#1A1525" stroke="#9B59B6" stroke-width="1"/>
+  <text x="522" y="537" text-anchor="middle" fill="#C39BD3" font-size="9" font-weight="600">Agent 2: Strategist</text>
+  <text x="522" y="550" text-anchor="middle" fill="#888" font-size="8">Strategy + delay (24h funds)</text>
+  <text x="522" y="563" text-anchor="middle" fill="#888" font-size="8">ROI-aware decision</text>
+
+  <!-- Arrow -->
+  <line x1="600" y1="546" x2="620" y2="546" stroke="#9B59B6" stroke-width="1" marker-end="url(#purple)"/>
+
+  <!-- Agent 3 -->
+  <rect x="620" y="520" width="155" height="52" rx="5" fill="#1A1525" stroke="#9B59B6" stroke-width="1"/>
+  <text x="697" y="537" text-anchor="middle" fill="#C39BD3" font-size="9" font-weight="600">Agent 3: Cmd Builder</text>
+  <text x="697" y="550" text-anchor="middle" fill="#888" font-size="8">Structured JSON only</text>
+  <text x="697" y="563" text-anchor="middle" fill="#888" font-size="8">No direct API calls</text>
+
+  <!-- Groq label -->
+  <text x="870" y="530" fill="#666" font-size="9">Groq API</text>
+  <text x="870" y="543" fill="#666" font-size="9">llama-3.3-70b</text>
+  <text x="870" y="556" fill="#666" font-size="9">Gemini fallback</text>
+  <text x="870" y="569" fill="#555" font-size="8">LLM_PROVIDER env</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- EXECUTE LANE -->
+  <!-- ═══════════════════════════════════════════ -->
+
+  <!-- Down arrow AI→Policy -->
+  <line x1="524" y1="582" x2="524" y2="612" stroke="#9B59B6" stroke-width="1.5" marker-end="url(#purple)"/>
+
+  <!-- Policy Engine -->
+  <rect x="258" y="612" width="250" height="100" rx="8" fill="#121510" stroke="#2ECC71" stroke-width="1.5"/>
+  <text x="383" y="633" text-anchor="middle" fill="#2ECC71" font-size="11" font-weight="700">Policy Engine (Go)</text>
+  <text x="383" y="648" text-anchor="middle" fill="#888" font-size="8">10 deterministic rules · no AI</text>
+  <text x="383" y="661" text-anchor="middle" fill="#888" font-size="8">R1: non-retryable UPI codes</text>
+  <text x="383" y="674" text-anchor="middle" fill="#888" font-size="8">R4: RBI mandate 24h + ₹15K</text>
+  <text x="383" y="687" text-anchor="middle" fill="#888" font-size="8">R6-7: amount ceiling + human</text>
+  <text x="383" y="700" text-anchor="middle" fill="#555" font-size="8">R8-10: retries · cooldown · allowlist</text>
+
+  <!-- Arrow policy→execution -->
+  <line x1="508" y1="662" x2="548" y2="662" stroke="#2ECC71" stroke-width="1.5" marker-end="url(#green)"/>
+  <text x="528" y="656" text-anchor="middle" fill="#2ECC71" font-size="8">OK</text>
+
+  <!-- Execution Worker -->
+  <rect x="548" y="612" width="220" height="100" rx="8" fill="#1A1A1A" stroke="#E67E22" stroke-width="1.5"/>
+  <text x="658" y="633" text-anchor="middle" fill="#E67E22" font-size="11" font-weight="700">Execution Worker (Go)</text>
+
+  <rect x="560" y="642" width="90" height="20" rx="3" fill="#0D0D0D" stroke="#E67E22" stroke-width="0.8"/>
+  <text x="605" y="656" text-anchor="middle" fill="#E67E22" font-size="8">Retry Payment</text>
+
+  <rect x="660" y="642" width="95" height="20" rx="3" fill="#0D0D0D" stroke="#E67E22" stroke-width="0.8"/>
+  <text x="707" y="656" text-anchor="middle" fill="#E67E22" font-size="8">Payment Link</text>
+
+  <rect x="560" y="668" width="90" height="20" rx="3" fill="#0D0D0D" stroke="#E67E22" stroke-width="0.8"/>
+  <text x="605" y="682" text-anchor="middle" fill="#E67E22" font-size="8">Notify Customer</text>
+
+  <rect x="660" y="668" width="95" height="20" rx="3" fill="#0D0D0D" stroke="#E67E22" stroke-width="0.8"/>
+  <text x="707" y="682" text-anchor="middle" fill="#E67E22" font-size="8">Escalate / Stop</text>
+
+  <text x="658" y="703" text-anchor="middle" fill="#555" font-size="8">Redis cooldown · retry_count++</text>
+
+  <!-- Human approval box -->
+  <rect x="870" y="617" width="200" height="55" rx="6" fill="#1A1200" stroke="#C5A028" stroke-width="1.2"/>
+  <text x="970" y="637" text-anchor="middle" fill="#C5A028" font-size="10" font-weight="700">Human Approval Queue</text>
+  <text x="970" y="652" text-anchor="middle" fill="#888" font-size="8">Amount > ₹50K · Mandate > ₹15K</text>
+  <text x="970" y="665" text-anchor="middle" fill="#888" font-size="8">YG risk-blocked · API /approve</text>
+
+  <line x1="768" y1="655" x2="870" y2="650" stroke="#C5A028" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#gold)"/>
+
+  <!-- Self-recovery detection -->
+  <rect x="870" y="682" width="200" height="42" rx="6" fill="#0D150D" stroke="#2ECC71" stroke-width="1.2"/>
+  <text x="970" y="700" text-anchor="middle" fill="#2ECC71" font-size="9" font-weight="700">Self-Recovery Detector</text>
+  <text x="970" y="715" text-anchor="middle" fill="#888" font-size="8">payment.captured → check open cases</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- STORE LANE -->
+  <!-- ═══════════════════════════════════════════ -->
+
+  <!-- Down arrow execution→store -->
+  <line x1="524" y1="712" x2="524" y2="748" stroke="#E67E22" stroke-width="1.5" marker-end="url(#orange)"/>
+
+  <!-- PostgreSQL -->
+  <rect x="145" y="748" width="145" height="75" rx="8" fill="#1A1A1A" stroke="#4A9EFF" stroke-width="1.5"/>
+  <text x="217" y="770" text-anchor="middle" fill="#4A9EFF" font-size="10" font-weight="700">PostgreSQL 16</text>
+  <text x="217" y="784" text-anchor="middle" fill="#888" font-size="8">9 tables · UUID PKs</text>
+  <text x="217" y="797" text-anchor="middle" fill="#888" font-size="8">BIGINT amounts (paise)</text>
+  <text x="217" y="810" text-anchor="middle" fill="#555" font-size="8">audit_logs · bank_outage_events</text>
+
+  <!-- Redis -->
+  <rect x="315" y="748" width="145" height="75" rx="8" fill="#1A1A1A" stroke="#E74C3C" stroke-width="1.5"/>
+  <text x="387" y="770" text-anchor="middle" fill="#E74C3C" font-size="10" font-weight="700">Redis 7</text>
+  <text x="387" y="784" text-anchor="middle" fill="#888" font-size="8">Idempotency · Rate limit</text>
+  <text x="387" y="797" text-anchor="middle" fill="#888" font-size="8">Outage counters · Locks</text>
+  <text x="387" y="810" text-anchor="middle" fill="#555" font-size="8">Cooldowns · Agent state</text>
+
+  <!-- Audit log -->
+  <rect x="485" y="748" width="145" height="75" rx="8" fill="#1A1A1A" stroke="#C5A028" stroke-width="1.5"/>
+  <text x="557" y="770" text-anchor="middle" fill="#C5A028" font-size="10" font-weight="700">Audit Trail</text>
+  <text x="557" y="784" text-anchor="middle" fill="#888" font-size="8">Every actor logged</text>
+  <text x="557" y="797" text-anchor="middle" fill="#888" font-size="8">system·ai·policy·human</text>
+  <text x="557" y="810" text-anchor="middle" fill="#555" font-size="8">customer_self · validator</text>
+
+  <!-- Kafka topics -->
+  <rect x="655" y="748" width="145" height="75" rx="8" fill="#1A1A1A" stroke="#2ECC71" stroke-width="1.5"/>
+  <text x="727" y="770" text-anchor="middle" fill="#2ECC71" font-size="10" font-weight="700">Kafka Topics (7)</text>
+  <text x="727" y="784" text-anchor="middle" fill="#888" font-size="8">payment.events</text>
+  <text x="727" y="797" text-anchor="middle" fill="#888" font-size="8">revenue.risk · recovery.*</text>
+  <text x="727" y="810" text-anchor="middle" fill="#555" font-size="8">recovery.blocked (NEW)</text>
+
+  <!-- Dashboard connection -->
+  <line x1="970" y1="153" x2="970" y2="617" stroke="#9B59B6" stroke-width="1" stroke-dasharray="3,4"/>
+  <line x1="970" y1="617" x2="1070" y2="617" stroke="#9B59B6" stroke-width="1" stroke-dasharray="3,4"/>
+  <text x="1048" y="390" fill="#666" font-size="8" text-anchor="middle" transform="rotate(-90, 1048, 390)">REST API reads</text>
+
+  <!-- ── ARROW MARKERS ── -->
+  <defs>
+    <marker id="gold" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#C5A028"/>
+    </marker>
+    <marker id="blue" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4A9EFF"/>
+    </marker>
+    <marker id="green" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#2ECC71"/>
+    </marker>
+    <marker id="orange" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#E67E22"/>
+    </marker>
+    <marker id="red" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#E74C3C"/>
+    </marker>
+    <marker id="purple" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#9B59B6"/>
+    </marker>
+  </defs>
+
+  <!-- ── LEGEND ── -->
+  <rect x="88" y="836" width="900" height="18" rx="4" fill="#111"/>
+  <circle cx="108" cy="845" r="4" fill="#4A9EFF"/>
+  <text x="118" y="849" fill="#666" font-size="9">Go Service</text>
+  <circle cx="188" cy="845" r="4" fill="#9B59B6"/>
+  <text x="198" y="849" fill="#666" font-size="9">Python/AI Service</text>
+  <circle cx="298" cy="845" r="4" fill="#2ECC71"/>
+  <text x="308" y="849" fill="#666" font-size="9">Kafka / Storage</text>
+  <circle cx="388" cy="845" r="4" fill="#E67E22"/>
+  <text x="398" y="849" fill="#666" font-size="9">Execution</text>
+  <circle cx="458" cy="845" r="4" fill="#E74C3C"/>
+  <text x="468" y="849" fill="#666" font-size="9">Block / Outage</text>
+  <circle cx="538" cy="845" r="4" fill="#C5A028"/>
+  <text x="548" y="849" fill="#666" font-size="9">Human Gate</text>
+  <text x="700" y="849" fill="#333" font-size="9">- - -  async / conditional path</text>
+  <text x="830" y="849" fill="#333" font-size="9">——  main pipeline</text>
+</svg>
