@@ -219,6 +219,12 @@ func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// ─── Special handling: payment.captured during active recovery ───────
+		// If a recovery case exists for this payment, mark it as customer_self_recovered.
+		if payload.Event == "payment.captured" {
+			go h.handleCustomerSelfRecovery(razorpayEventID, payload)
+		}
+
 		slog.Info("webhook: event processed",
 			"event_id", razorpayEventID,
 			"event_type", payload.Event,
@@ -324,4 +330,69 @@ func (h *WebhookHandler) buildKafkaEvent(razorpayEventID string, payload Razorpa
 	event.RawPayload = rawMap
 
 	return event
+}
+
+// handleCustomerSelfRecovery checks if a recovery case exists and marks it as customer_self_recovered.
+// Runs async — failure does not block the webhook response.
+func (h *WebhookHandler) handleCustomerSelfRecovery(razorpayEventID string, payload RazorpayWebhookPayload) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	p := payload.Payload.Payment.Entity
+	capturedAmount := p.Amount
+
+	// Check if a recovery case exists for this payment
+	var caseID, currentStatus string
+	err := h.db.QueryRow(ctx, `
+		SELECT rc.id, rc.status
+		FROM recovery_cases rc
+		JOIN payments pay ON pay.id = rc.payment_id
+		WHERE pay.razorpay_payment_id = $1
+		  AND rc.status IN ('open', 'in_progress', 'outage_batched', 'pending_human_approval')
+		LIMIT 1
+	`, p.ID).Scan(&caseID, &currentStatus)
+
+	if err != nil {
+		// No active recovery case found — normal capture flow
+		return
+	}
+
+	slog.Info("webhook: customer self-recovered",
+		"case_id", caseID,
+		"payment_id", p.ID,
+		"previous_status", currentStatus,
+		"captured_amount", capturedAmount,
+	)
+
+	// Update recovery case
+	_, err = h.db.Exec(ctx, `
+		UPDATE recovery_cases
+		SET status = 'customer_self_recovered',
+		    amount_recovered = $1,
+		    resolved_at = NOW(),
+		    updated_at = NOW()
+		WHERE id = $2
+	`, capturedAmount, caseID)
+	if err != nil {
+		slog.Error("webhook: failed to update customer_self_recovered case", "error", err, "case_id", caseID)
+		return
+	}
+
+	// Cancel any pending actions
+	h.db.Exec(ctx, `
+		UPDATE recovery_actions
+		SET status = 'skipped', updated_at = NOW()
+		WHERE case_id = $1 AND status = 'pending'
+	`, caseID)
+
+	// Audit log
+	metadata, _ := json.Marshal(map[string]interface{}{
+		"razorpay_event_id": razorpayEventID,
+		"captured_amount":   capturedAmount,
+		"previous_status":   currentStatus,
+	})
+	h.db.Exec(ctx, `
+		INSERT INTO audit_logs (entity_type, entity_id, actor, action, metadata)
+		VALUES ('recovery_case', $1, 'customer_self', 'self_recovered', $2)
+	`, caseID, metadata)
 }

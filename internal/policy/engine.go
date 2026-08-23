@@ -1,120 +1,204 @@
 package policy
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"time"
-
-	"recoverai/internal/models"
 )
 
-// Decision is the policy engine's verdict on an AI command.
-type Decision string
+// ─── Input Structures ─────────────────────────────────────────────────────────
 
-const (
-	DecisionApproved   Decision = "approved"   // Execute as-is
-	DecisionOverridden Decision = "overridden" // Execute with a modified action
-	DecisionRejected   Decision = "rejected"   // Block execution entirely
-)
-
-// PolicyResult is the output of the Policy Engine for a single AI command.
-type PolicyResult struct {
-	PaymentID      string                `json:"payment_id"`
-	Decision       Decision              `json:"decision"`
-	ApprovedAction models.RecoveryAction `json:"approved_action"`
-	Reason         string                `json:"reason"`
-	EvaluatedAt    time.Time             `json:"evaluated_at"`
+// PolicyInput is the complete context passed to the Policy Engine.
+type PolicyInput struct {
+	Action                    string
+	PaymentID                 string
+	CaseID                    string
+	Amount                    int64 // paise
+	RetryCount                int
+	UPIErrorCode              string
+	UPIErrorCategory          string // "TD" | "BD" | "unknown"
+	IsMandatePayment          bool
+	RBIMinimumRetryAt         *time.Time
+	CooldownUntil             *time.Time
+	BankOutageDetected        bool
+	ForcePaymentLink          bool
+	CustomerSuccessfulPayments int
+	MerchantPolicy            MerchantPolicy
 }
 
-// Engine evaluates AI commands against deterministic hard rules.
-// The AI is NEVER executed directly — all commands must pass through here first.
-type Engine struct {
-	highValueThreshold int64 // in paise
-	maxRetryAmount     int64 // maximum amount for auto-retry (in paise)
+// MerchantPolicy holds the merchant's recovery configuration.
+type MerchantPolicy struct {
+	MaxRetryAmountPaise      int64
+	MaxRetries               int
+	RetryCooldownMinutes     int
+	RequireHumanAbovePaise   int64
+	AllowedActions           []string
+	HighValueThresholdPaise  int64 // RBI: ₹15,000 for mandate payments
 }
 
-// NewEngine creates a policy engine with the given constraints.
-func NewEngine(highValueThreshold int64) *Engine {
-	return &Engine{
-		highValueThreshold: highValueThreshold,
-		maxRetryAmount:     1000000, // ₹10,000 in paise — auto-retry ceiling
+// ─── Output Structure ─────────────────────────────────────────────────────────
+
+// PolicyDecision is the deterministic output of the Policy Engine.
+type PolicyDecision struct {
+	Allowed               bool
+	Reason                string
+	RequiresHumanApproval bool
+	RuleTriggered         string
+}
+
+// ─── Policy Engine ────────────────────────────────────────────────────────────
+
+// Engine evaluates policy rules. NO randomness. NO AI. Purely deterministic.
+type Engine struct{}
+
+// NewEngine creates a new Policy Engine.
+func NewEngine() *Engine {
+	return &Engine{}
+}
+
+// Evaluate applies all 10 rules in order. First BLOCK wins.
+func (e *Engine) Evaluate(input PolicyInput) PolicyDecision {
+	// ─── Rule 1: Non-retryable UPI error codes ────────────────────────────────
+	// Research-backed: Z9, YG, Z8, U68 should NEVER be retried directly.
+	if input.Action == "RETRY_PAYMENT" {
+		nonRetryable := []string{"Z9", "YG", "Z8", "U68"}
+		for _, code := range nonRetryable {
+			if input.UPIErrorCode == code {
+				return PolicyDecision{
+					Allowed:       false,
+					Reason:        fmt.Sprintf("UPI code %s is non-retryable — no direct retry permitted", code),
+					RuleTriggered: "rule1_non_retryable_upi",
+				}
+			}
+		}
+	}
+
+	// ─── Rule 2: Force payment link override ──────────────────────────────────
+	// Validator flagged this payment — respect the constraint.
+	if input.ForcePaymentLink && input.Action == "RETRY_PAYMENT" {
+		return PolicyDecision{
+			Allowed:       false,
+			Reason:        "Validator flagged: retry not permitted for this error type",
+			RuleTriggered: "rule2_force_payment_link",
+		}
+	}
+
+	// ─── Rule 3: Bank outage active ────────────────────────────────────────────
+	// Payments during outage are batched — do not execute now.
+	if input.BankOutageDetected && input.Action == "RETRY_PAYMENT" {
+		return PolicyDecision{
+			Allowed:       false,
+			Reason:        "Bank outage active — retry batched, do not execute now",
+			RuleTriggered: "rule3_bank_outage",
+		}
+	}
+
+	// ─── Rule 4: RBI mandate minimum retry window ─────────────────────────────
+	// RBI rule: 24 hours minimum between retries for recurring/mandate payments.
+	if input.IsMandatePayment && input.RBIMinimumRetryAt != nil {
+		if time.Now().Before(*input.RBIMinimumRetryAt) {
+			return PolicyDecision{
+				Allowed:       false,
+				Reason:        fmt.Sprintf("RBI mandate rule: minimum 24h between retries not elapsed (retry allowed after %s)", input.RBIMinimumRetryAt.Format(time.RFC3339)),
+				RuleTriggered: "rule4_rbi_mandate_window",
+			}
+		}
+	}
+
+	// ─── Rule 5: High-value mandate RBI approval ───────────────────────────────
+	// RBI: mandate payments above ₹15,000 require explicit customer approval.
+	if input.IsMandatePayment && input.Amount > input.MerchantPolicy.HighValueThresholdPaise {
+		return PolicyDecision{
+			Allowed:               false,
+			Reason:                fmt.Sprintf("RBI: mandate amounts >₹%.2f require explicit customer approval", float64(input.MerchantPolicy.HighValueThresholdPaise)/100),
+			RequiresHumanApproval: true,
+			RuleTriggered:         "rule5_rbi_mandate_high_value",
+		}
+	}
+
+	// ─── Rule 6: Amount ceiling for auto-retry ────────────────────────────────
+	// Merchant-configurable limit — amounts above this need human review.
+	if input.Action == "RETRY_PAYMENT" && input.Amount > input.MerchantPolicy.MaxRetryAmountPaise {
+		return PolicyDecision{
+			Allowed:               false,
+			Reason:                fmt.Sprintf("Amount ₹%.2f exceeds auto-retry ceiling ₹%.2f — requires human approval", float64(input.Amount)/100, float64(input.MerchantPolicy.MaxRetryAmountPaise)/100),
+			RequiresHumanApproval: true,
+			RuleTriggered:         "rule6_retry_amount_ceiling",
+		}
+	}
+
+	// ─── Rule 7: High value always needs human ────────────────────────────────
+	// Universal rule: very high amounts always escalate.
+	if input.Amount > input.MerchantPolicy.RequireHumanAbovePaise {
+		return PolicyDecision{
+			Allowed:               false,
+			Reason:                fmt.Sprintf("Amount >₹%.2f requires human approval", float64(input.MerchantPolicy.RequireHumanAbovePaise)/100),
+			RequiresHumanApproval: true,
+			RuleTriggered:         "rule7_require_human_high_value",
+		}
+	}
+
+	// ─── Rule 8: Max retries reached ───────────────────────────────────────────
+	// Prevent infinite retry loops.
+	if input.RetryCount >= input.MerchantPolicy.MaxRetries {
+		return PolicyDecision{
+			Allowed:       false,
+			Reason:        fmt.Sprintf("Maximum retries (%d) reached", input.MerchantPolicy.MaxRetries),
+			RuleTriggered: "rule8_max_retries",
+		}
+	}
+
+	// ─── Rule 9: Cooldown active ───────────────────────────────────────────────
+	// Rate-limiting per payment to avoid over-retrying.
+	if input.CooldownUntil != nil && time.Now().Before(*input.CooldownUntil) {
+		return PolicyDecision{
+			Allowed:       false,
+			Reason:        fmt.Sprintf("Cooldown active until %s", input.CooldownUntil.Format(time.RFC3339)),
+			RuleTriggered: "rule9_cooldown_active",
+		}
+	}
+
+	// ─── Rule 10: Action not in allowlist ──────────────────────────────────────
+	// Merchant explicitly controls which actions are permitted.
+	if !contains(input.MerchantPolicy.AllowedActions, actionToAllowlistName(input.Action)) {
+		return PolicyDecision{
+			Allowed:       false,
+			Reason:        fmt.Sprintf("Action %s not in merchant's allowed actions", input.Action),
+			RuleTriggered: "rule10_action_not_allowed",
+		}
+	}
+
+	// ─── All rules passed → ALLOWED ────────────────────────────────────────────
+	return PolicyDecision{
+		Allowed:       true,
+		Reason:        "All policy checks passed",
+		RuleTriggered: "none",
 	}
 }
 
-// Evaluate applies all policy rules to an AI command and returns a PolicyResult.
-// Rules are evaluated in priority order; first matching rule wins.
-func (e *Engine) Evaluate(ctx context.Context, cmd *models.AICommand, payment *PaymentContext) (*PolicyResult, error) {
-	result := &PolicyResult{
-		PaymentID:   cmd.PaymentID,
-		EvaluatedAt: time.Now(),
+// actionToAllowlistName maps ExecutorCommand action names to merchant policy names.
+func actionToAllowlistName(action string) string {
+	switch action {
+	case "RETRY_PAYMENT":
+		return "retry"
+	case "GENERATE_PAYMENT_LINK":
+		return "payment_link"
+	case "SEND_NOTIFICATION":
+		return "notify"
+	case "ESCALATE":
+		return "escalate"
+	case "STOP":
+		return "stop"
+	default:
+		return ""
 	}
-
-	// ─── Rule 1: High-value payments require human approval ──────────────────
-	if payment.Amount >= e.highValueThreshold && !cmd.RequiresApproval {
-		result.Decision = DecisionOverridden
-		result.ApprovedAction = models.RecoveryActionEscalate
-		result.Reason = fmt.Sprintf("high-value payment (₹%.2f ≥ ₹%.2f threshold) requires human approval",
-			float64(payment.Amount)/100, float64(e.highValueThreshold)/100)
-		slog.Info("policy: high-value override", "payment_id", cmd.PaymentID, "amount", payment.Amount)
-		return result, nil
-	}
-
-	// ─── Rule 2: YG (risk threshold exceeded) error code must escalate ───────
-	if payment.ErrorCode == string(models.UPIErrorYG) {
-		result.Decision = DecisionOverridden
-		result.ApprovedAction = models.RecoveryActionEscalate
-		result.Reason = "UPI error YG (risk threshold exceeded) always requires human approval"
-		return result, nil
-	}
-
-	// ─── Rule 3: Cap auto-retry amounts ──────────────────────────────────────
-	if cmd.RecommendedAction == models.RecoveryActionRetry && payment.Amount > e.maxRetryAmount {
-		result.Decision = DecisionOverridden
-		result.ApprovedAction = models.RecoveryActionPaymentLink
-		result.Reason = fmt.Sprintf("amount ₹%.2f exceeds auto-retry ceiling ₹%.2f; issuing payment link instead",
-			float64(payment.Amount)/100, float64(e.maxRetryAmount)/100)
-		return result, nil
-	}
-
-	// ─── Rule 4: RBI compliance — no retry after 24h ─────────────────────────
-	if time.Since(payment.CreatedAt) > 24*time.Hour {
-		result.Decision = DecisionRejected
-		result.Reason = "payment older than 24 hours; RBI mandate prohibits automated recovery"
-		slog.Info("policy: RBI compliance block", "payment_id", cmd.PaymentID)
-		return result, nil
-	}
-
-	// ─── Rule 5: Low confidence AI commands should not auto-execute ──────────
-	if cmd.Confidence < 0.5 && cmd.RecommendedAction == models.RecoveryActionRetry {
-		result.Decision = DecisionOverridden
-		result.ApprovedAction = models.RecoveryActionNotifyCustomer
-		result.Reason = fmt.Sprintf("AI confidence %.2f < 0.5; downgrading retry to customer notification", cmd.Confidence)
-		return result, nil
-	}
-
-	// ─── Rule 6: Abort is always approved ────────────────────────────────────
-	if cmd.RecommendedAction == models.RecoveryActionAbort {
-		result.Decision = DecisionApproved
-		result.ApprovedAction = models.RecoveryActionAbort
-		result.Reason = "abort command approved"
-		return result, nil
-	}
-
-	// ─── Default: Approve the AI recommendation ──────────────────────────────
-	result.Decision = DecisionApproved
-	result.ApprovedAction = cmd.RecommendedAction
-	result.Reason = "all policy checks passed"
-	return result, nil
 }
 
-// PaymentContext provides the policy engine with payment details needed for rule evaluation.
-type PaymentContext struct {
-	PaymentID  string
-	MerchantID string
-	Amount     int64
-	Currency   string
-	ErrorCode  string
-	CreatedAt  time.Time
-	AttemptNum int
+// contains checks if a string slice contains a value.
+func contains(slice []string, val string) bool {
+	for _, item := range slice {
+		if item == val {
+			return true
+		}
+	}
+	return false
 }
