@@ -16,7 +16,11 @@
     "clsx": "^2.1.1",
     "lucide-react": "^0.446.0",
     "tailwind-merge": "^2.5.2",
-    "@radix-ui/react-slot": "^1.1.0"
+    "@radix-ui/react-slot": "^1.1.0",
+    "@radix-ui/react-tooltip": "^1.1.2",
+    "swr": "^2.2.5",
+    "recharts": "^2.12.7",
+    "date-fns": "^3.6.0"
   },
   "devDependencies": {
     "typescript": "^5",
