@@ -2,194 +2,376 @@ package validator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"recoverai/internal/models"
+	"recoverai/internal/config"
 	redisclient "recoverai/internal/redis"
 )
 
-const (
-	// Maximum number of recovery attempts allowed per payment.
-	maxRecoveryAttempts = 3
+// ─── Validation Result ────────────────────────────────────────────────────────
 
-	// Maximum age of a payment eligible for recovery (RBI mandate compliance).
-	maxPaymentAgeHours = 24
+// ValidationResult is the output of the 6-check validator gate.
+type ValidationResult struct {
+	RecoveryCaseID uuid.UUID `json:"recovery_case_id"`
+	PaymentID      string    `json:"payment_id"`
+	Passed         bool      `json:"passed"`
+	SkipReason     string    `json:"skip_reason,omitempty"`
+	BlockedByCheck string    `json:"blocked_by_check,omitempty"`
+	// Flags for special routing
+	ForcePaymentLink bool `json:"force_payment_link"` // CHECK 5: non-retryable errors
+	CheckedAt        time.Time `json:"checked_at"`
+}
 
-	// Minimum amount eligible for automated recovery (in paise = ₹10).
-	minRecoverableAmount int64 = 1000
+// ─── Recovery Case Input ──────────────────────────────────────────────────────
 
-	// Daily retry cap per merchant (prevents over-retrying and merchant flagging).
-	maxDailyMerchantRetries = 50
-)
+// RecoveryCaseInput is loaded from the database for validation.
+type RecoveryCaseInput struct {
+	ID                   uuid.UUID
+	PaymentID            uuid.UUID
+	RazorpayPaymentID    string
+	MerchantID           uuid.UUID
+	Amount               int64
+	UPIErrorCode         string
+	RecoveryProbability  float64
+	RetryCount           int
+	MaxRetries           int
+	IsMandatePayment     bool
+	CreatedAt            time.Time
+	Status               string
+}
 
-// Validator runs the 6 hard checks that MUST ALL PASS before the AI is ever called.
-// The AI is NEVER invoked unless this validator returns Passed=true.
+// ─── Validator ────────────────────────────────────────────────────────────────
+
+// Validator runs 6 checks before the AI service is invoked.
+// If ANY check fails, the case is blocked and the AI is NOT called.
 type Validator struct {
-	db    *pgxpool.Pool
-	redis *redisclient.Client
+	db         *pgxpool.Pool
+	redis      *redisclient.Client
+	cfg        *config.Config
+	httpClient *http.Client
 }
 
 // NewValidator creates a new pre-recovery validator.
-func NewValidator(db *pgxpool.Pool, r *redisclient.Client) *Validator {
-	return &Validator{db: db, redis: r}
+func NewValidator(db *pgxpool.Pool, redis *redisclient.Client, cfg *config.Config) *Validator {
+	return &Validator{
+		db:         db,
+		redis:      redis,
+		cfg:        cfg,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
 }
 
-// Validate runs all 6 checks and returns a ValidationResult.
-// Short-circuits on the first failure — remaining checks are marked as skipped.
-func (v *Validator) Validate(ctx context.Context, event *models.KafkaRiskScoredEvent) (*models.ValidationResult, error) {
-	result := &models.ValidationResult{
-		PaymentID: event.PaymentID,
-		CheckedAt: time.Now(),
+// Validate runs all 6 checks in order. Short-circuits on first failure.
+func (v *Validator) Validate(ctx context.Context, caseID uuid.UUID) (*ValidationResult, error) {
+	result := &ValidationResult{
+		RecoveryCaseID: caseID,
+		CheckedAt:      time.Now(),
 	}
 
-	checks := []struct {
-		name string
-		fn   func() (bool, string, error)
-	}{
-		{"payment_status_is_failed", func() (bool, string, error) {
-			return v.checkPaymentStatusFailed(ctx, event)
-		}},
-		{"not_already_recovering", func() (bool, string, error) {
-			return v.checkNotAlreadyRecovering(ctx, event)
-		}},
-		{"retry_attempts_under_limit", func() (bool, string, error) {
-			return v.checkRetryAttemptsUnderLimit(ctx, event)
-		}},
-		{"payment_age_within_window", func() (bool, string, error) {
-			return v.checkPaymentAgeWithinWindow(ctx, event)
-		}},
-		{"amount_above_minimum", func() (bool, string, error) {
-			return v.checkAmountAboveMinimum(ctx, event)
-		}},
-		{"merchant_daily_limit_not_exceeded", func() (bool, string, error) {
-			return v.checkMerchantDailyLimit(ctx, event)
-		}},
+	// Load recovery case from DB
+	caseInput, err := v.loadRecoveryCase(ctx, caseID)
+	if err != nil {
+		return nil, fmt.Errorf("load recovery case: %w", err)
+	}
+	result.PaymentID = caseInput.RazorpayPaymentID
+
+	// ─── CHECK 1: Is payment already captured? ────────────────────────────────
+	if skip, reason := v.check1AlreadyCaptured(ctx, caseInput); skip {
+		result.Passed = false
+		result.SkipReason = reason
+		result.BlockedByCheck = "check1_already_captured"
+		v.updateCaseSkipped(ctx, caseInput, "customer_self_recovered", reason)
+		v.auditLog(ctx, caseInput, "skip_already_captured", reason)
+		return result, nil
 	}
 
-	for _, check := range checks {
-		passed, reason, err := check.fn()
-		if err != nil {
-			slog.Error("validator: check error", "check", check.name, "payment_id", event.PaymentID, "error", err)
-			// Count as failed on error — do not call AI if we cannot verify
-			result.Checks = append(result.Checks, models.ValidationCheck{
-				Name:   check.name,
-				Passed: false,
-				Reason: fmt.Sprintf("check error: %v", err),
-			})
-			result.Passed = false
-			result.BlockedBy = check.name
-			return result, nil
-		}
-
-		result.Checks = append(result.Checks, models.ValidationCheck{
-			Name:   check.name,
-			Passed: passed,
-			Reason: reason,
-		})
-
-		if !passed {
-			result.Passed = false
-			result.BlockedBy = check.name
-			slog.Info("validator: payment blocked", "check", check.name, "payment_id", event.PaymentID, "reason", reason)
-			return result, nil
-		}
+	// ─── CHECK 2: Is this part of an active bank outage? ─────────────────────
+	if skip, reason := v.check2BankOutage(ctx, caseInput); skip {
+		result.Passed = false
+		result.SkipReason = reason
+		result.BlockedByCheck = "check2_bank_outage"
+		v.updateCaseOutageBatched(ctx, caseInput, reason)
+		v.auditLog(ctx, caseInput, "skip_bank_outage", reason)
+		return result, nil
 	}
 
+	// ─── CHECK 3: RBI mandate compliance ──────────────────────────────────────
+	if skip, reason := v.check3RBIMandate(ctx, caseInput); skip {
+		result.Passed = false
+		result.SkipReason = reason
+		result.BlockedByCheck = "check3_rbi_mandate"
+		v.updateCaseSkipped(ctx, caseInput, "pending_human_approval", reason)
+		v.auditLog(ctx, caseInput, "skip_rbi_mandate", reason)
+		return result, nil
+	}
+
+	// ─── CHECK 4: Is recovery economically worth it? ──────────────────────────
+	if skip, reason := v.check4ROI(ctx, caseInput); skip {
+		result.Passed = false
+		result.SkipReason = reason
+		result.BlockedByCheck = "check4_negative_roi"
+		v.updateCaseSkipped(ctx, caseInput, "not_worth_recovering", reason)
+		v.auditLog(ctx, caseInput, "skip_negative_roi", reason)
+		return result, nil
+	}
+
+	// ─── CHECK 5: Non-retryable errors (flag for AI, do not skip) ────────────
+	forcePaymentLink := v.check5NonRetryable(caseInput)
+	if forcePaymentLink {
+		result.ForcePaymentLink = true
+		slog.Info("validator: non-retryable error code, forcing payment_link strategy",
+			"case_id", caseID,
+			"upi_error_code", caseInput.UPIErrorCode,
+		)
+	}
+
+	// ─── CHECK 6: Max retries already hit? ────────────────────────────────────
+	if skip, reason := v.check6MaxRetries(ctx, caseInput); skip {
+		result.Passed = false
+		result.SkipReason = reason
+		result.BlockedByCheck = "check6_max_retries"
+		v.updateCaseSkipped(ctx, caseInput, "failed", reason)
+		v.auditLog(ctx, caseInput, "skip_max_retries", reason)
+		return result, nil
+	}
+
+	// All checks passed → proceed to AI
 	result.Passed = true
+	slog.Info("validator: all checks passed, proceeding to AI",
+		"case_id", caseID,
+		"payment_id", caseInput.RazorpayPaymentID,
+	)
 	return result, nil
 }
 
-// ─── Check 1: Payment must be in 'failed' state ───────────────────────────────
-func (v *Validator) checkPaymentStatusFailed(ctx context.Context, event *models.KafkaRiskScoredEvent) (bool, string, error) {
-	var status string
-	err := v.db.QueryRow(ctx, "SELECT status FROM payments WHERE id = $1", event.PaymentID).Scan(&status)
+// ─── CHECK 1: Payment already captured (late authorisation edge case) ─────────
+
+func (v *Validator) check1AlreadyCaptured(ctx context.Context, c *RecoveryCaseInput) (skip bool, reason string) {
+	// Call Razorpay API: GET /v1/payments/{id}
+	url := fmt.Sprintf("https://api.razorpay.com/v1/payments/%s", c.RazorpayPaymentID)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req.SetBasicAuth(v.cfg.RazorpayKeyID, v.cfg.RazorpayKeySecret)
+
+	resp, err := v.httpClient.Do(req)
 	if err != nil {
-		return false, "", fmt.Errorf("query payment status: %w", err)
+		slog.Warn("validator: failed to call Razorpay API for payment status", "error", err)
+		return false, "" // fail open — proceed to AI if API is down
 	}
-	if status == string(models.PaymentStatusFailed) {
-		return true, "", nil
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("validator: Razorpay API returned non-200", "status", resp.StatusCode)
+		return false, ""
 	}
-	return false, fmt.Sprintf("payment status is '%s', not 'failed'", status), nil
+
+	var payment struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payment); err != nil {
+		slog.Warn("validator: failed to decode Razorpay payment response", "error", err)
+		return false, ""
+	}
+
+	if payment.Status == "captured" {
+		return true, "Payment already captured — customer self-recovered"
+	}
+	return false, ""
 }
 
-// ─── Check 2: No active recovery already in progress ────────────────────────
-func (v *Validator) checkNotAlreadyRecovering(ctx context.Context, event *models.KafkaRiskScoredEvent) (bool, string, error) {
-	lockKey := fmt.Sprintf("recovery:lock:%s", event.PaymentID)
-	exists, err := v.redis.Exists(ctx, lockKey)
-	if err != nil {
-		return false, "", fmt.Errorf("check recovery lock: %w", err)
+// ─── CHECK 2: Bank outage detected ────────────────────────────────────────────
+
+func (v *Validator) check2BankOutage(ctx context.Context, c *RecoveryCaseInput) (skip bool, reason string) {
+	if c.UPIErrorCode == "" {
+		return false, ""
 	}
+
+	outageKey := fmt.Sprintf("bank_outage:%s", c.UPIErrorCode)
+	exists, err := v.redis.Exists(ctx, outageKey)
+	if err != nil {
+		slog.Warn("validator: failed to check bank outage flag", "error", err)
+		return false, ""
+	}
+
 	if exists {
-		return false, "recovery already in progress for this payment", nil
+		retryAt := time.Now().Add(60 * time.Minute)
+		reason = fmt.Sprintf("Bank outage detected for %s — batched for retry at %s",
+			c.UPIErrorCode, retryAt.Format(time.RFC3339))
+		return true, reason
 	}
-	return true, "", nil
+	return false, ""
 }
 
-// ─── Check 3: Retry attempts under the per-payment limit ─────────────────────
-func (v *Validator) checkRetryAttemptsUnderLimit(ctx context.Context, event *models.KafkaRiskScoredEvent) (bool, string, error) {
-	var count int
-	err := v.db.QueryRow(ctx,
-		"SELECT COUNT(*) FROM recovery_attempts WHERE payment_id = $1",
-		event.PaymentID,
-	).Scan(&count)
-	if err != nil {
-		return false, "", fmt.Errorf("count recovery attempts: %w", err)
+// ─── CHECK 3: RBI mandate compliance ──────────────────────────────────────────
+
+func (v *Validator) check3RBIMandate(ctx context.Context, c *RecoveryCaseInput) (skip bool, reason string) {
+	if !c.IsMandatePayment {
+		return false, ""
 	}
-	if count >= maxRecoveryAttempts {
-		return false, fmt.Sprintf("payment has already had %d/%d recovery attempts", count, maxRecoveryAttempts), nil
+
+	// RBI rule: minimum 24 hours between retries for mandate payments
+	rbiMinRetryAt := c.CreatedAt.Add(24 * time.Hour)
+	if time.Now().Before(rbiMinRetryAt) {
+		return true, fmt.Sprintf("RBI mandate rules: minimum 24h between retries (retry allowed after %s)",
+			rbiMinRetryAt.Format(time.RFC3339))
 	}
-	return true, "", nil
+
+	// RBI rule: amounts > ₹15,000 require explicit customer approval
+	if c.Amount > 1500000 { // ₹15,000 in paise
+		return true, "RBI: amounts >₹15,000 require explicit customer approval"
+	}
+
+	return false, ""
 }
 
-// ─── Check 4: Payment is within the recovery time window ──────────────────────
-func (v *Validator) checkPaymentAgeWithinWindow(ctx context.Context, event *models.KafkaRiskScoredEvent) (bool, string, error) {
-	var createdAt time.Time
-	err := v.db.QueryRow(ctx,
-		"SELECT COALESCE(razorpay_created_at, created_at) FROM payments WHERE id = $1",
-		event.PaymentID,
-	).Scan(&createdAt)
-	if err != nil {
-		return false, "", fmt.Errorf("query payment created_at: %w", err)
-	}
-	age := time.Since(createdAt)
-	if age > time.Duration(maxPaymentAgeHours)*time.Hour {
-		return false, fmt.Sprintf("payment is %.1f hours old, exceeds %dh window", age.Hours(), maxPaymentAgeHours), nil
-	}
-	return true, "", nil
-}
+// ─── CHECK 4: Recovery ROI ────────────────────────────────────────────────────
 
-// ─── Check 5: Amount is above the minimum recoverable threshold ───────────────
-func (v *Validator) checkAmountAboveMinimum(ctx context.Context, event *models.KafkaRiskScoredEvent) (bool, string, error) {
-	var amount int64
-	err := v.db.QueryRow(ctx, "SELECT amount FROM payments WHERE id = $1", event.PaymentID).Scan(&amount)
-	if err != nil {
-		return false, "", fmt.Errorf("query payment amount: %w", err)
-	}
-	if amount < minRecoverableAmount {
-		return false, fmt.Sprintf("amount ₹%.2f is below minimum ₹%.2f", float64(amount)/100, float64(minRecoverableAmount)/100), nil
-	}
-	return true, "", nil
-}
-
-// ─── Check 6: Merchant has not exceeded the daily retry cap ──────────────────
-func (v *Validator) checkMerchantDailyLimit(ctx context.Context, event *models.KafkaRiskScoredEvent) (bool, string, error) {
-	key := fmt.Sprintf("merchant:daily_retries:%s:%s",
-		event.MerchantID,
-		time.Now().UTC().Format("2006-01-02"),
+func (v *Validator) check4ROI(ctx context.Context, c *RecoveryCaseInput) (skip bool, reason string) {
+	// Estimated cost by action type (in paise)
+	const (
+		costRetry           = 0     // free
+		costPaymentLink     = 0     // free
+		costSendNotification = 50    // SMS cost
+		costHumanEscalation = 10000 // agent time
 	)
-	countStr, err := v.redis.Get(ctx, key)
+
+	// Simple heuristic: assume action will be retry or payment_link (zero cost)
+	estimatedCost := int64(0)
+	if c.RecoveryProbability < 0.3 {
+		// Low probability likely triggers escalation
+		estimatedCost = costHumanEscalation
+	}
+
+	recoveryROI := float64(c.Amount)*c.RecoveryProbability - float64(estimatedCost)
+
+	// Load merchant's MinRecoveryROI policy (default 0)
+	var minROI float64
+	err := v.db.QueryRow(ctx, `
+		SELECT COALESCE(min_recovery_roi, 0)
+		FROM recovery_policies
+		WHERE merchant_id = $1
+	`, c.MerchantID).Scan(&minROI)
 	if err != nil {
-		// Key doesn't exist yet — count is 0
-		return true, "", nil
+		slog.Warn("validator: failed to load min_recovery_roi policy, using default 0", "error", err)
+		minROI = 0
 	}
-	var count int64
-	fmt.Sscanf(countStr, "%d", &count)
-	if count >= maxDailyMerchantRetries {
-		return false, fmt.Sprintf("merchant has hit daily retry cap (%d/%d)", count, maxDailyMerchantRetries), nil
+
+	if recoveryROI < minROI {
+		return true, fmt.Sprintf("Recovery ROI ₹%.2f below threshold ₹%.2f — not cost effective",
+			recoveryROI/100, minROI/100)
 	}
-	return true, "", nil
+
+	// Update recovery_roi in DB
+	v.db.Exec(ctx, `UPDATE recovery_cases SET recovery_roi = $1 WHERE id = $2`, recoveryROI/100, c.ID)
+
+	return false, ""
+}
+
+// ─── CHECK 5: Non-retryable error codes ───────────────────────────────────────
+
+// check5NonRetryable flags error codes that should NEVER be retried, only payment_link or escalate.
+// Returns true if force_payment_link should be set.
+func (v *Validator) check5NonRetryable(c *RecoveryCaseInput) bool {
+	// YG = risk threshold exceeded (NPCI block)
+	// Z8 = per-transaction limit exceeded
+	// Both need alternate payment method, NOT a direct retry
+	switch c.UPIErrorCode {
+	case "YG", "Z8":
+		return true
+	default:
+		return false
+	}
+}
+
+// ─── CHECK 6: Max retries hit ─────────────────────────────────────────────────
+
+func (v *Validator) check6MaxRetries(ctx context.Context, c *RecoveryCaseInput) (skip bool, reason string) {
+	if c.RetryCount >= c.MaxRetries {
+		return true, fmt.Sprintf("Max retries (%d) already reached", c.MaxRetries)
+	}
+	return false, ""
+}
+
+// ─── Database helpers ─────────────────────────────────────────────────────────
+
+func (v *Validator) loadRecoveryCase(ctx context.Context, caseID uuid.UUID) (*RecoveryCaseInput, error) {
+	var c RecoveryCaseInput
+	err := v.db.QueryRow(ctx, `
+		SELECT
+			rc.id,
+			rc.payment_id,
+			p.razorpay_payment_id,
+			rc.merchant_id,
+			rc.revenue_at_risk,
+			COALESCE(rc.upi_error_code, ''),
+			COALESCE(rc.recovery_probability, 0.5),
+			rc.retry_count,
+			rc.max_retries,
+			COALESCE(p.is_mandate_payment, FALSE),
+			rc.created_at,
+			rc.status
+		FROM recovery_cases rc
+		JOIN payments p ON p.id = rc.payment_id
+		WHERE rc.id = $1
+	`, caseID).Scan(
+		&c.ID,
+		&c.PaymentID,
+		&c.RazorpayPaymentID,
+		&c.MerchantID,
+		&c.Amount,
+		&c.UPIErrorCode,
+		&c.RecoveryProbability,
+		&c.RetryCount,
+		&c.MaxRetries,
+		&c.IsMandatePayment,
+		&c.CreatedAt,
+		&c.Status,
+	)
+	return &c, err
+}
+
+func (v *Validator) updateCaseSkipped(ctx context.Context, c *RecoveryCaseInput, status, reason string) {
+	_, err := v.db.Exec(ctx, `
+		UPDATE recovery_cases
+		SET status = $1, validator_skip_reason = $2, updated_at = NOW()
+		WHERE id = $3
+	`, status, reason, c.ID)
+	if err != nil {
+		slog.Error("validator: failed to update case status", "error", err, "case_id", c.ID)
+	}
+}
+
+func (v *Validator) updateCaseOutageBatched(ctx context.Context, c *RecoveryCaseInput, reason string) {
+	cooldownUntil := time.Now().Add(60 * time.Minute)
+	_, err := v.db.Exec(ctx, `
+		UPDATE recovery_cases
+		SET status = 'outage_batched',
+		    bank_outage_detected = TRUE,
+		    cooldown_until = $1,
+		    validator_skip_reason = $2,
+		    updated_at = NOW()
+		WHERE id = $3
+	`, cooldownUntil, reason, c.ID)
+	if err != nil {
+		slog.Error("validator: failed to update outage batch status", "error", err, "case_id", c.ID)
+	}
+}
+
+func (v *Validator) auditLog(ctx context.Context, c *RecoveryCaseInput, action, reason string) {
+	metadata := map[string]string{"reason": reason}
+	metaJSON, _ := json.Marshal(metadata)
+
+	_, err := v.db.Exec(ctx, `
+		INSERT INTO audit_logs (entity_type, entity_id, actor, action, metadata)
+		VALUES ('recovery_case', $1, 'validator', $2, $3)
+	`, c.ID, action, metaJSON)
+	if err != nil {
+		slog.Error("validator: failed to write audit log", "error", err)
+	}
 }

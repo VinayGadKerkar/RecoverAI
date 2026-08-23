@@ -1,7 +1,7 @@
 """
 RecoverAI — Python AI Service
 FastAPI entry point. This service is INTERNAL ONLY — it never receives
-direct external requests. All traffic comes from the Go worker.
+direct external requests. All traffic comes from the Go validator consumer.
 
 The AI produces structured JSON commands. It NEVER executes financial
 operations directly.
@@ -9,15 +9,16 @@ operations directly.
 
 import logging
 import os
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from llm import get_llm
-from graph.recovery_graph import build_recovery_graph
-from schemas.input import RecoveryRequest
-from schemas.output import RecoveryCommand
+from agents.risk_analyst import run_risk_analyst
+from agents.strategist import run_strategist
+from agents.executor_cmd import build_executor_command
+from schemas.input import AnalyzeRequest
+from schemas.output import ExecutorCommand
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,26 +26,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Build the LangGraph recovery graph at startup
-recovery_graph = None
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global recovery_graph
-    logger.info("Initialising LLM and recovery graph...")
-    llm = get_llm()
-    recovery_graph = build_recovery_graph(llm)
-    logger.info("Recovery graph ready")
-    yield
-    logger.info("Shutting down AI service")
-
-
 app = FastAPI(
     title="RecoverAI — AI Recovery Service",
     version="1.0.0",
     description="Internal AI service for payment recovery decisions. Never call externally.",
-    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -54,40 +39,77 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
+# Initialize LLM at startup
+llm = None
+
+@app.on_event("startup")
+async def startup():
+    global llm
+    logger.info("Initializing LLM...")
+    llm = get_llm(temperature=0.1)
+    logger.info(f"LLM ready: {os.getenv('LLM_PROVIDER', 'groq')}")
+
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "llm_provider": os.getenv("LLM_PROVIDER", "groq")}
+    return {
+        "status": "ok",
+        "llm_provider": os.getenv("LLM_PROVIDER", "groq")
+    }
 
 
-@app.post("/api/v1/recover", response_model=RecoveryCommand)
-async def recover(request: RecoveryRequest) -> RecoveryCommand:
+@app.post("/analyze", response_model=ExecutorCommand)
+async def analyze(request: AnalyzeRequest) -> ExecutorCommand:
     """
-    Analyse a risk-scored failed payment and produce a structured recovery command.
-
+    Analyze a failed payment and produce a structured recovery command.
+    
+    Flow: Risk Analyst → Strategist → Executor Command Builder (sequential)
+    
     The command is returned to the Go Policy Engine, which decides whether
     to execute it. The AI never executes financial operations directly.
     """
-    if recovery_graph is None:
-        raise HTTPException(status_code=503, detail="Recovery graph not initialised")
+    if llm is None:
+        raise HTTPException(status_code=503, detail="LLM not initialized")
 
     logger.info(
-        "Processing recovery request",
-        extra={"payment_id": request.payment_id, "risk_score": request.risk_score.score},
+        f"Processing recovery request: payment_id={request.payment_id}, "
+        f"amount=₹{request.amount_paise/100:.2f}, error={request.upi_error_code}"
     )
 
     try:
-        result = await recovery_graph.ainvoke({"request": request})
-        command: RecoveryCommand = result["command"]
+        # ─── Agent 1: Risk Analyst ────────────────────────────────────────────
+        risk_assessment = await run_risk_analyst(llm, request)
         logger.info(
-            "Recovery command generated",
-            extra={
-                "payment_id": command.payment_id,
-                "action": command.recommended_action,
-                "confidence": command.confidence,
-            },
+            f"Risk assessment complete: probability={risk_assessment.recovery_probability:.2f}, "
+            f"priority={risk_assessment.priority}"
         )
+
+        # ─── Agent 2: Recovery Strategist ─────────────────────────────────────
+        strategy = await run_strategist(llm, request, risk_assessment)
+        logger.info(
+            f"Strategy selected: {strategy.strategy}, "
+            f"confidence={strategy.confidence:.2f}, "
+            f"delay={strategy.delay_minutes}min"
+        )
+
+        # ─── Agent 3: Executor Command Builder ───────────────────────────────
+        command = build_executor_command(request, risk_assessment, strategy)
+        logger.info(
+            f"Command generated: action={command.action}, "
+            f"scheduled_at={command.scheduled_at_minutes}min"
+        )
+
         return command
+
     except Exception as exc:
-        logger.error("Recovery graph error: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Recovery graph error: {exc}")
+        logger.error(f"Recovery analysis failed: {exc}", exc_info=True)
+        # Return safe STOP command on error
+        return ExecutorCommand(
+            action="STOP",
+            payment_id=request.payment_id,
+            case_id=request.case_id,
+            scheduled_at_minutes=0,
+            parameters={"reason": f"AI pipeline error: {str(exc)}"},
+            risk_assessment_summary=None,
+            strategy_summary=None,
+        )
