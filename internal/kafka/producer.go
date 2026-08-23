@@ -60,6 +60,31 @@ func (p *Producer) PublishAICommand(ctx context.Context, cmd *models.AICommand) 
 	return p.publish(ctx, TopicAICommands, cmd.PaymentID, cmd)
 }
 
+// Publish publishes an arbitrary payload to a topic with a given key.
+// Use this for custom events not covered by the typed methods above.
+func (p *Producer) Publish(ctx context.Context, topic, key string, payload []byte) error {
+	deliveryChan := make(chan kafka.Event, 1)
+	err := p.p.Produce(&kafka.Message{
+		TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+		Key:            []byte(key),
+		Value:          payload,
+	}, deliveryChan)
+	if err != nil {
+		return fmt.Errorf("produce message: %w", err)
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case e := <-deliveryChan:
+		m := e.(*kafka.Message)
+		if m.TopicPartition.Error != nil {
+			return fmt.Errorf("delivery failed: %w", m.TopicPartition.Error)
+		}
+	}
+	return nil
+}
+
 // publish serialises v as JSON and produces it to the given topic.
 // paymentID is used as the message key to ensure ordering within a partition.
 func (p *Producer) publish(ctx context.Context, topic, key string, v any) error {

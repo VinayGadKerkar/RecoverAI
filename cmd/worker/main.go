@@ -9,11 +9,10 @@ import (
 	"syscall"
 
 	"recoverai/internal/config"
+	"recoverai/internal/consumers"
 	"recoverai/internal/db"
 	"recoverai/internal/kafka"
-	"recoverai/internal/outage"
 	"recoverai/internal/redis"
-	"recoverai/internal/services"
 )
 
 func main() {
@@ -43,38 +42,26 @@ func main() {
 	}
 	defer redisClient.Close()
 
-	outageDetector := outage.NewDetector(redisClient)
-
-	riskSvc := services.NewRiskService(dbPool, redisClient, outageDetector)
-	recoverySvc := services.NewRecoveryService(dbPool, redisClient, cfg)
+	producer, err := kafka.NewProducer(cfg.KafkaBrokers)
+	if err != nil {
+		slog.Error("failed to create kafka producer", "error", err)
+		os.Exit(1)
+	}
+	defer producer.Close()
 
 	var wg sync.WaitGroup
 
-	// Stage 2: Risk Engine consumer
+	// ─── Stage 2: Risk Processor (payment.events → revenue.risk) ─────────────
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		consumer, err := kafka.NewConsumer(cfg.KafkaBrokers, kafka.TopicPaymentEvents, "risk-engine-group")
-		if err != nil {
-			slog.Error("failed to create risk engine consumer", "error", err)
-			return
+		riskProcessor := consumers.NewRiskProcessor(dbPool, redisClient, producer, cfg)
+		if err := riskProcessor.Run(ctx); err != nil {
+			slog.Error("risk processor stopped with error", "error", err)
 		}
-		defer consumer.Close()
-		kafka.RunRiskEngineConsumer(ctx, consumer, riskSvc, dbPool)
 	}()
 
-	// Stage 3 + 4 + 5: Pre-Recovery Validator → AI → Policy Engine consumer
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		consumer, err := kafka.NewConsumer(cfg.KafkaBrokers, kafka.TopicRiskScored, "recovery-group")
-		if err != nil {
-			slog.Error("failed to create recovery consumer", "error", err)
-			return
-		}
-		defer consumer.Close()
-		kafka.RunRecoveryConsumer(ctx, consumer, recoverySvc, dbPool, redisClient, cfg)
-	}()
+	// TODO: Stage 3-5 consumers (revenue.risk → validator → ai → policy → execution)
 
 	slog.Info("workers started")
 

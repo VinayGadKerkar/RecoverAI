@@ -40,6 +40,9 @@ type Config struct {
 	MaxDailyRetries     int
 	RetryWindowMinutes  int
 	HighValueThreshold  int64 // in paise
+
+	// Outage detection
+	OutageDetectionThreshold int // failures per 5-minute window to trigger outage flag
 }
 
 func Load() (*Config, error) {
@@ -61,6 +64,7 @@ func Load() (*Config, error) {
 		MaxDailyRetries:    getEnvInt("MAX_DAILY_RETRIES", 5),
 		RetryWindowMinutes: getEnvInt("RETRY_WINDOW_MINUTES", 30),
 		HighValueThreshold: int64(getEnvInt("HIGH_VALUE_THRESHOLD_PAISE", 5000000)), // ₹50,000
+		OutageDetectionThreshold: getEnvInt("OUTAGE_DETECTION_THRESHOLD", 10),
 	}
 	return cfg, nil
 }

@@ -45,16 +45,29 @@ func main() {
 	defer redisClient.Close()
 
 	r := chi.NewRouter()
+
+	// Global middleware
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(custommiddleware.StructuredLogger(logger))
 	r.Use(custommiddleware.RateLimit(redisClient))
 
-	// Public webhook endpoint — no JWT, uses HMAC verification
-	r.Post("/webhooks/razorpay", handlers.NewWebhookHandler(dbPool, redisClient, cfg).Handle)
+	// ─── Health check (no auth) ───────────────────────────────────────────────
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"status":"ok"}`)
+	})
 
-	// Authenticated API routes
+	// ─── Razorpay webhook endpoint (public, HMAC-verified) ────────────────────
+	// CRITICAL: Must respond within 5 seconds or Razorpay retries.
+	// CRITICAL: At-least-once delivery — same event can arrive multiple times.
+	// CRITICAL: Out-of-order delivery — payment.captured may arrive before payment.failed.
+	webhookHandler := handlers.NewWebhookHandler(dbPool, redisClient, cfg)
+	r.Post("/webhooks/razorpay", webhookHandler.Handle)
+
+	// ─── Authenticated API routes (JWT required) ──────────────────────────────
 	r.Group(func(r chi.Router) {
 		r.Use(custommiddleware.JWTAuth(cfg.JWTSecret))
 		r.Route("/api/v1", func(r chi.Router) {
@@ -62,11 +75,6 @@ func main() {
 			handlers.RegisterMerchantRoutes(r, dbPool, cfg)
 			handlers.RegisterAnalyticsRoutes(r, dbPool, cfg)
 		})
-	})
-
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, `{"status":"ok"}`)
 	})
 
 	srv := &http.Server{
