@@ -135,6 +135,26 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    # Comment out this service and use mock-ai below for zero-token development/testing
+
+  # Mock AI Service — No LLM calls, zero tokens used
+  # Uncomment this and comment out real ai-service above for development/load testing
+  # mock-ai:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.go
+  #     target: mock-ai
+  #   ports:
+  #     - "8001:8001"
+  #   environment:
+  #     PORT: "8001"
+  #     MOCK_AI_DELAY_MS: "50"  # Simulate 50ms AI latency
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 3
+  #   restart: unless-stopped
 
   frontend:
     build:

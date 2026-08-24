@@ -1,0 +1,27 @@
+{
+  "payment_id": "pay_test_mock_123",
+  "case_id": "case_test_mock_456",
+  "amount_paise": 499900,
+  "upi_error_code": "U30",
+  "upi_error_category": "TD",
+  "failure_type": "transient",
+  "failure_reason": "Debit timeout",
+  "time_of_failure_hour": 14,
+  "force_payment_link": false,
+  "customer_history": {
+    "successful_payments": 5,
+    "failed_payments": 1,
+    "lifetime_value_paise": 2500000,
+    "last_successful_payment_at": "2024-01-15T10:30:00Z",
+    "days_since_last_success": 3
+  },
+  "risk_score": 0.82,
+  "priority": "high",
+  "merchant_policy": {
+    "max_retry_amount_paise": 1000000,
+    "max_retries": 3,
+    "retry_cooldown_minutes": 10,
+    "require_human_above_paise": 5000000,
+    "allowed_actions": ["retry", "payment_link", "notify", "escalate"]
+  }
+}
