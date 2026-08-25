@@ -209,7 +209,16 @@ func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		publishCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 
-		if err := h.producer.PublishPaymentEvent(publishCtx, kafkaEvent); err != nil {
+		// Serialise the local KafkaPaymentEvent to JSON and publish using the
+		// generic Publish method — avoids a type dependency on models package.
+		eventPayload, err := json.Marshal(kafkaEvent)
+		if err != nil {
+			slog.Error("webhook: failed to marshal kafka event", "error", err)
+			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if err := h.producer.Publish(publishCtx, "payment.events", kafkaEvent.PaymentID, eventPayload); err != nil {
 			slog.Error("webhook: kafka publish failed",
 				"error", err,
 				"event_id", razorpayEventID,
