@@ -75,5 +75,4 @@ const CardFooter = React.forwardRef<
 ));
 CardFooter.displayName = "CardFooter";
 
-export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent }; (run: npx shadcn@latest add card)
-export {};
+export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent };

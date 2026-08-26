@@ -47,6 +47,7 @@ func main() {
 	r := chi.NewRouter()
 
 	// Global middleware
+	r.Use(custommiddleware.CORS) // must be first — answers OPTIONS before auth/rate-limit
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
@@ -59,6 +60,9 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, `{"status":"ok"}`)
 	})
+
+	// ─── Public auth routes (no JWT required) ─────────────────────────────────
+	handlers.RegisterAuthRoutes(r, dbPool, cfg)
 
 	// ─── Razorpay webhook endpoint (public, HMAC-verified) ────────────────────
 	// CRITICAL: Must respond within 5 seconds or Razorpay retries.

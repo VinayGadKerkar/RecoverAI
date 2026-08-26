@@ -22,7 +22,8 @@ type Config struct {
 	KafkaBrokers string
 
 	// Auth
-	JWTSecret string
+	JWTSecret    string
+	DemoPassword string // password accepted by POST /auth/login
 
 	// Razorpay
 	RazorpayKeyID     string
@@ -53,6 +54,7 @@ func Load() (*Config, error) {
 		RedisURL:           getEnv("REDIS_URL", "redis://localhost:6379"),
 		KafkaBrokers:       getEnv("KAFKA_BROKERS", "localhost:9092"),
 		JWTSecret:          mustGetEnv("JWT_SECRET"),
+		DemoPassword:       getEnv("DEMO_PASSWORD", "demo"),
 		RazorpayKeyID:      getEnv("RAZORPAY_KEY_ID", ""),
 		RazorpayKeySecret:  getEnv("RAZORPAY_KEY_SECRET", ""),
 		RazorpayWebhookSecret: mustGetEnv("RAZORPAY_WEBHOOK_SECRET"),

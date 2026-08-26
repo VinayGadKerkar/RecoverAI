@@ -84,7 +84,7 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {aiPerf.strategy_breakdown.map((item) => (
+                {(aiPerf.strategy_breakdown ?? []).map((item) => (
                   <div
                     key={item.strategy}
                     className="flex items-center justify-between border-b border-border pb-3 last:border-0 last:pb-0"

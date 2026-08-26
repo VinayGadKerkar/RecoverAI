@@ -1,18 +1,11 @@
-"use client";
-
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function HomePage() {
-  const router = useRouter();
-
-  useEffect(() => {
-    router.push("/dashboard");
-  }, [router]);
-
   return (
-    <div className="flex h-screen items-center justify-center">
-      <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+    <div className="flex h-screen items-center justify-center bg-[#050508] flex-col gap-4">
+      <h1 className="text-white text-2xl">RecoverAI</h1>
+      <Link href="/login" className="text-emerald-500 hover:underline">Go to Login</Link>
+      <Link href="/dashboard" className="text-emerald-500 hover:underline">Go to Dashboard</Link>
     </div>
   );
 }

@@ -29,10 +29,10 @@ func RegisterRecoveryRoutes(r chi.Router, db *pgxpool.Pool, _ interface{}, cfg *
 
 	h := &recoveryHandler{db: db, cfg: cfg, producer: producer}
 
-	r.Get("/recovery/cases", h.ListCases)
-	r.Get("/recovery/cases/{id}", h.GetCase)
-	r.Post("/recovery/cases/{id}/approve", h.ApproveCases)
-	r.Post("/recovery/cases/{id}/stop", h.StopCase)
+	r.Get("/recovery-cases", h.ListCases)
+	r.Get("/recovery-cases/{id}", h.GetCase)
+	r.Post("/recovery-cases/{id}/approve", h.ApproveCases)
+	r.Post("/recovery-cases/{id}/stop", h.StopCase)
 }
 
 type recoveryHandler struct {

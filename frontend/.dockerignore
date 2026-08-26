@@ -1,0 +1,10 @@
+# Exclude TypeScript config — Next.js 14 only supports .js / .mjs config files.
+# next.config.mjs is used instead inside the container.
+next.config.ts
+
+# Dependencies and build output — not needed in build context
+node_modules
+.next
+
+# Local env files
+.env*.local
