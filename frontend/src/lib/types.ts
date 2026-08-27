@@ -46,26 +46,36 @@ export interface RevenueDataPoint {
 export interface RecoveryCase {
   id: string;
   payment_id: string;
-  merchant_id: string;
-  customer_id: string;
-  revenue_at_risk: number; // paise
-  amount_recovered: number; // paise
+  razorpay_payment_id: string;
+  customer_id?: string;
+  customer_email?: string;
+  amount_paise: number;
+  amount_formatted: string;
   status: RecoveryCaseStatus;
   priority: "low" | "medium" | "high" | "critical";
-  recovery_probability: number;
-  failure_type: string;
   upi_error_code?: string;
-  bank_outage_detected: boolean;
-  validator_skip_reason?: string;
-  ai_risk_assessment?: any;
-  ai_strategy?: any;
-  policy_decision?: string;
+  upi_error_category?: string;
+  failure_type?: string;
+  recovery_probability?: number;
+  recovery_roi?: number;
+  amount_recovered_paise: number;
+  amount_recovered_formatted: string;
   retry_count: number;
-  partial_recovery: boolean;
+  bank_outage_detected: boolean;
+  is_mandate_payment: boolean;
+  validator_skip_reason?: string;
+  ai_strategy?: any;
+  ai_diagnosis?: any;
   created_at: string;
   resolved_at?: string;
-  customer_name?: string;
-  customer_phone?: string;
+  recovery_time_minutes?: number;
+  partial_recovery?: boolean;
+  cooldown_until?: string;
+  rbi_minimum_retry_at?: string;
+  policy_decision?: string;
+  // Alias for backwards compatibility
+  revenue_at_risk?: number;
+  amount_recovered?: number;
 }
 
 export interface AuditLogEntry {

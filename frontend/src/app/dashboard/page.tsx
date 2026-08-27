@@ -334,7 +334,7 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-2">
                       <Badge variant={c.status as any}>{c.status.replace(/_/g, " ")}</Badge>
                       <span className="text-sm font-medium text-foreground">
-                        {formatCurrency(c.revenue_at_risk)}
+                        {formatCurrency(c.amount_paise)}
                       </span>
                       {c.upi_error_code && (
                         <span className="text-xs text-muted-foreground">
@@ -343,7 +343,7 @@ export default function DashboardPage() {
                       )}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {formatDate(c.created_at)} • {c.customer_name || "Unknown customer"}
+                      {formatDate(c.created_at)} • {c.customer_email || c.customer_id || "Unknown customer"}
                     </p>
                   </div>
                   {c.validator_skip_reason && (

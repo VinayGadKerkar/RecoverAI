@@ -31,9 +31,11 @@ async function fetchAPI<T>(endpoint: string): Promise<T> {
   const res = await fetch(`${API_BASE}/api/v1${endpoint}`, { headers });
 
   if (res.status === 401) {
-    // Token missing or expired — clear it and send user to login.
+    // In demo mode, if no token is stored, just continue without auth.
+    // The API skips JWT enforcement when JWT_SECRET is not set for localhost.
     clearToken();
-    if (typeof window !== "undefined") {
+    // Only redirect if we're on a page that explicitly requires auth
+    if (typeof window !== "undefined" && window.location.pathname.startsWith("/admin")) {
       window.location.href = "/login";
     }
     throw new APIError(401, "Unauthorized");
@@ -116,27 +118,38 @@ export async function getRecoveryCases(filters?: {
   const params = new URLSearchParams();
   if (filters) {
     Object.entries(filters).forEach(([key, value]) => {
-      if (value !== undefined) {
+      if (value !== undefined && value !== "") {
         params.append(key, String(value));
       }
     });
   }
   const query = params.toString() ? `?${params.toString()}` : "";
-  return fetchAPI<RecoveryCase[]>(`/recovery-cases${query}`);
+  // Backend returns { cases: [...], pagination: {...} }
+  const data = await fetchAPI<{ cases: RecoveryCase[] } | RecoveryCase[]>(`/recovery-cases${query}`);
+  // Handle both shapes for backwards compat
+  if (Array.isArray(data)) return data;
+  return (data as { cases: RecoveryCase[] }).cases ?? [];
 }
 
 export async function getRecoveryCase(id: string): Promise<RecoveryCase> {
-  return fetchAPI<RecoveryCase>(`/recovery-cases/${id}`);
+  // Backend returns { case: {...}, audit_trail: [...], recovery_actions: [...] }
+  const data = await fetchAPI<{ case: RecoveryCase } | RecoveryCase>(`/recovery-cases/${id}`);
+  if ("case" in data) return (data as { case: RecoveryCase }).case;
+  return data as RecoveryCase;
 }
 
 export async function getAuditLogs(caseId: string): Promise<AuditLogEntry[]> {
-  return fetchAPI<AuditLogEntry[]>(`/recovery-cases/${caseId}/audit-logs`);
+  const data = await fetchAPI<{ audit_trail: AuditLogEntry[] } | AuditLogEntry[]>(`/recovery-cases/${caseId}/audit-logs`);
+  if (Array.isArray(data)) return data;
+  return (data as { audit_trail: AuditLogEntry[] }).audit_trail ?? [];
 }
 
 // ─── Recent Activity ──────────────────────────────────────────────────────────
 
 export async function getRecentCases(limit = 10): Promise<RecoveryCase[]> {
-  return fetchAPI<RecoveryCase[]>(
+  const data = await fetchAPI<{ cases: RecoveryCase[] } | RecoveryCase[]>(
     `/recovery-cases?limit=${limit}&sort=created_at:desc`
   );
+  if (Array.isArray(data)) return data;
+  return (data as { cases: RecoveryCase[] }).cases ?? [];
 }

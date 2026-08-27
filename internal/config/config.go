@@ -57,7 +57,7 @@ func Load() (*Config, error) {
 		DemoPassword:       getEnv("DEMO_PASSWORD", "demo"),
 		RazorpayKeyID:      getEnv("RAZORPAY_KEY_ID", ""),
 		RazorpayKeySecret:  getEnv("RAZORPAY_KEY_SECRET", ""),
-		RazorpayWebhookSecret: mustGetEnv("RAZORPAY_WEBHOOK_SECRET"),
+		RazorpayWebhookSecret: getEnv("RAZORPAY_WEBHOOK_SECRET", ""),
 		AIServiceURL:       getEnv("AI_SERVICE_URL", "http://localhost:8000"),
 		GroqAPIKey:         getEnv("GROQ_API_KEY", ""),
 		GeminiAPIKey:       getEnv("GEMINI_API_KEY", ""),

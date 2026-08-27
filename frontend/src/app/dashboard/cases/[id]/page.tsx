@@ -114,13 +114,13 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
               <div>
                 <p className="text-xs text-muted-foreground">Revenue at Risk</p>
                 <p className="text-lg font-bold text-foreground">
-                  {formatCurrency(caseData.revenue_at_risk)}
+                  {formatCurrency(caseData.amount_paise)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Amount Recovered</p>
                 <p className="text-lg font-bold text-green-400">
-                  {formatCurrency(caseData.amount_recovered)}
+                  {formatCurrency(caseData.amount_recovered_paise)}
                 </p>
               </div>
               <div>

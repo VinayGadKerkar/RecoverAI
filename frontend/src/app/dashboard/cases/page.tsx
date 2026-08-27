@@ -202,7 +202,7 @@ export default function RecoveryCasesPage() {
                         </Badge>
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
-                        {formatCurrency(c.revenue_at_risk)}
+                        {formatCurrency(c.amount_paise)}
                       </td>
                       <td className="whitespace-nowrap px-6 py-4">
                         <span
