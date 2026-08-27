@@ -61,7 +61,35 @@ func main() {
 		}
 	}()
 
-	// TODO: Stage 3-5 consumers (revenue.risk → validator → ai → policy → execution)
+	// ─── Stage 3-4: Validator + AI (revenue.risk → recovery.commands) ────────
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		validatorConsumer := consumers.NewValidatorConsumer(dbPool, redisClient, producer, cfg)
+		if err := validatorConsumer.Run(ctx); err != nil {
+			slog.Error("validator consumer stopped with error", "error", err)
+		}
+	}()
+
+	// ─── Stage 5: Execution Worker (recovery.commands → recovery.results) ────
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		executionWorker := consumers.NewExecutionWorker(dbPool, redisClient, producer, cfg)
+		if err := executionWorker.Run(ctx); err != nil {
+			slog.Error("execution worker stopped with error", "error", err)
+		}
+	}()
+
+	// ─── Stage 6: Result Processor (recovery.results → finalize) ─────────────
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		resultProcessor := consumers.NewResultProcessor(dbPool, cfg)
+		if err := resultProcessor.Run(ctx); err != nil {
+			slog.Error("result processor stopped with error", "error", err)
+		}
+	}()
 
 	slog.Info("workers started")
 
