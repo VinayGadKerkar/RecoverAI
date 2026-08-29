@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RecoverAI - Test Payment Page</title>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+            font-size: 14px;
+        }
+        input, select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .button-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 30px;
+        }
+        button {
+            padding: 14px 24px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+        .btn-success:hover {
+            background: #059669;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+        .btn-fail {
+            background: #ef4444;
+            color: white;
+        }
+        .btn-fail:hover {
+            background: #dc2626;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+        .info-box {
+            background: #f3f4f6;
+            border-left: 4px solid #667eea;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #555;
+        }
+        .info-box strong {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        .code {
+            font-family: 'Courier New', monospace;
+            background: #e5e7eb;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .status {
+            text-align: center;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-weight: 500;
+            display: none;
+        }
+        .status.success { background: #d1fae5; color: #065f46; display: block; }
+        .status.error { background: #fee2e2; color: #991b1b; display: block; }
+        .status.info { background: #dbeafe; color: #1e40af; display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 RecoverAI Test Payment</h1>
+        <p class="subtitle">Create real Razorpay test payments to trigger webhooks</p>
+
+        <div class="info-box">
+            <strong>📋 Test Cards:</strong>
+            <div style="margin-top: 8px;">
+                ✅ <span class="code">4111 1111 1111 1111</span> - SUCCESS<br>
+                ❌ <span class="code">4000 0025 0000 3155</span> - FAILS (perfect for testing)
+            </div>
+        </div>
+
+        <div class="input-group">
+            <label for="amount">Amount (₹)</label>
+            <input type="number" id="amount" value="599" min="1" placeholder="599">
+        </div>
+
+        <div class="input-group">
+            <label for="name">Customer Name</label>
+            <input type="text" id="name" value="Test Customer" placeholder="Enter name">
+        </div>
+
+        <div class="input-group">
+            <label for="email">Customer Email</label>
+            <input type="email" id="email" value="test@example.com" placeholder="test@example.com">
+        </div>
+
+        <div class="input-group">
+            <label for="phone">Customer Phone</label>
+            <input type="tel" id="phone" value="9999999999" placeholder="9999999999">
+        </div>
+
+        <div class="input-group">
+            <label for="upi_error">UPI Error Code (for failed payments)</label>
+            <select id="upi_error">
+                <option value="U30">U30 - Transient Debit Failure (High Retry Success)</option>
+                <option value="U28">U28 - Bank Server Down (Outage)</option>
+                <option value="U16">U16 - Insufficient Balance</option>
+                <option value="Z9">Z9 - Insufficient Funds</option>
+                <option value="YG">YG - Risk Threshold Exceeded</option>
+                <option value="Z8">Z8 - Transaction Limit Exceeded</option>
+                <option value="U68">U68 - Transaction Not Permitted</option>
+            </select>
+        </div>
+
+        <div class="button-group">
+            <button class="btn-success" onclick="createPayment('success')">
+                ✓ Pay & Succeed
+            </button>
+            <button class="btn-fail" onclick="createPayment('fail')">
+                ✗ Pay & Fail
+            </button>
+        </div>
+
+        <div id="status" class="status"></div>
+    </div>
+
+    <script>
+        // Your Razorpay API keys
+        const RAZORPAY_KEY_ID = 'rzp_test_TUJZ7sMURAZiAa'; // From your .env
+        const API_BASE = 'http://localhost:8080';
+
+        async function createPayment(type) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = 'status info';
+            statusEl.textContent = 'Creating payment order...';
+
+            const amount = parseInt(document.getElementById('amount').value);
+            const name = document.getElementById('name').value;
+            const email = document.getElementById('email').value;
+            const phone = document.getElementById('phone').value;
+            const upiError = document.getElementById('upi_error').value;
+
+            if (!amount || amount < 1) {
+                statusEl.className = 'status error';
+                statusEl.textContent = 'Please enter a valid amount';
+                return;
+            }
+
+            try {
+                // Create order via your backend
+                const orderResponse = await fetch(`${API_BASE}/api/v1/create-order`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        amount: amount * 100, // Convert to paise
+                        currency: 'INR',
+                        notes: {
+                            test_type: type,
+                            expected_upi_error: upiError
+                        }
+                    })
+                });
+
+                if (!orderResponse.ok) {
+                    throw new Error('Failed to create order. Make sure your backend is running!');
+                }
+
+                const order = await orderResponse.json();
+
+                // Open Razorpay Checkout
+                const options = {
+                    key: RAZORPAY_KEY_ID,
+                    amount: order.amount,
+                    currency: order.currency,
+                    name: 'RecoverAI Test',
+                    description: `Test ${type} payment`,
+                    order_id: order.id,
+                    prefill: {
+                        name: name,
+                        email: email,
+                        contact: phone
+                    },
+                    handler: function(response) {
+                        statusEl.className = 'status success';
+                        statusEl.textContent = `✓ Payment succeeded! Payment ID: ${response.razorpay_payment_id}. Check your RecoverAI dashboard!`;
+                    },
+                    modal: {
+                        ondismiss: function() {
+                            statusEl.className = 'status error';
+                            statusEl.textContent = '✗ Payment cancelled';
+                        }
+                    },
+                    theme: {
+                        color: '#667eea'
+                    }
+                };
+
+                // If testing failure, show instructions
+                if (type === 'fail') {
+                    statusEl.className = 'status info';
+                    statusEl.innerHTML = `
+                        <strong>Use this card to FAIL:</strong><br>
+                        Card: <span class="code">4000 0025 0000 3155</span><br>
+                        CVV: Any 3 digits | Expiry: Any future date
+                    `;
+                }
+
+                const rzp = new Razorpay(options);
+                rzp.on('payment.failed', function(response) {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = `✗ Payment failed! Error: ${response.error.code}. RecoverAI pipeline triggered! Check your dashboard.`;
+                });
+                rzp.open();
+
+            } catch (error) {
+                statusEl.className = 'status error';
+                statusEl.textContent = `Error: ${error.message}`;
+                console.error(error);
+            }
+        }
+    </script>
+</body>
+</html>
