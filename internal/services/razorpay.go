@@ -27,6 +27,18 @@ func NewRazorpayService(cfg *config.Config) *RazorpayService {
 	}
 }
 
+// CreateOrder creates a new Razorpay order for test payments.
+// https://razorpay.com/docs/api/orders/
+func (s *RazorpayService) CreateOrder(ctx context.Context, amount int64, currency string, notes map[string]string) (map[string]any, error) {
+	body := map[string]any{
+		"amount":   amount,
+		"currency": currency,
+		"notes":    notes,
+	}
+
+	return s.doRequest(ctx, "POST", "/orders", body)
+}
+
 // CreatePaymentLink creates a new payment link for a failed payment.
 // https://razorpay.com/docs/api/payment-links/
 func (s *RazorpayService) CreatePaymentLink(ctx context.Context, paymentID string, amount int64, currency, customerEmail, customerPhone string) (string, error) {

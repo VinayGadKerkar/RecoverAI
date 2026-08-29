@@ -1,27 +1,39 @@
 "use client";
 
-import { use } from "react";
+import { useEffect, useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getRecoveryCase, getAuditLogs } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
-export default function CaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function CaseDetailPage() {
+  const pathname = usePathname();
+  const [id, setId] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Extract ID from pathname
+    const parts = pathname?.split('/') || [];
+    const caseId = parts[parts.length - 1];
+    if (caseId && caseId !== '[id]') {
+      setId(caseId);
+    }
+  }, [pathname]);
+
   const { data: caseData, isLoading: caseLoading } = useSWR(
-    `/recovery-cases/${id}`,
-    () => getRecoveryCase(id),
+    id ? `/recovery-cases/${id}` : null,
+    () => (id ? getRecoveryCase(id) : null),
     { refreshInterval: 5000 }
   );
 
   const { data: auditLogs, isLoading: logsLoading } = useSWR(
-    `/recovery-cases/${id}/audit-logs`,
-    () => getAuditLogs(id),
+    id ? `/recovery-cases/${id}/audit-logs` : null,
+    () => (id ? getAuditLogs(id) : null),
     { refreshInterval: 5000 }
   );
 
-  if (caseLoading || logsLoading) {
+  if (!id || caseLoading || logsLoading) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
@@ -86,7 +98,7 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
                 <div className="absolute left-[15px] top-0 h-full w-[2px] bg-border"></div>
 
                 {auditLogs && auditLogs.length > 0 ? (
-                  auditLogs.map((log, idx) => (
+                  auditLogs.map((log: any, idx: number) => (
                     <TimelineItem key={log.id} log={log} isLast={idx === auditLogs.length - 1} />
                   ))
                 ) : (
@@ -107,7 +119,7 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
             <CardContent className="space-y-3">
               <div>
                 <p className="text-xs text-muted-foreground">Status</p>
-                <Badge variant={caseData.status as any} className="mt-1">
+                <Badge className="mt-1">
                   {caseData.status.replace(/_/g, " ")}
                 </Badge>
               </div>
@@ -245,7 +257,7 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
               <div className="space-y-2">
                 <div>
                   <p className="text-xs text-muted-foreground">Final Status</p>
-                  <Badge variant={caseData.status as any} className="mt-1">
+                  <Badge className="mt-1">
                     {caseData.status.replace(/_/g, " ")}
                   </Badge>
                 </div>
@@ -269,11 +281,12 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
   );
 }
 
-function TimelineItem({ log, isLast }: { log: any; isLast: boolean }) {
+function TimelineItem({ log }: { log: any; isLast: boolean }) {
   const actorColors: Record<string, string> = {
     webhook: "text-blue-400",
     risk_engine: "text-purple-400",
     validator: "text-orange-400",
+    validator_consumer: "text-orange-400",
     ai_risk_analyst: "text-pink-400",
     ai_strategist: "text-cyan-400",
     ai_executor: "text-emerald-400",
@@ -299,10 +312,10 @@ function TimelineItem({ log, isLast }: { log: any; isLast: boolean }) {
           </span>
           <span className="text-sm text-foreground">{log.action}</span>
         </div>
-        {log.details && typeof log.details === "object" && (
+        {log.metadata && typeof log.metadata === "object" && (
           <div className="mt-1 rounded-md bg-muted/30 p-2 text-xs text-muted-foreground">
             <pre className="whitespace-pre-wrap break-words">
-              {JSON.stringify(log.details, null, 2)}
+              {JSON.stringify(log.metadata, null, 2)}
             </pre>
           </div>
         )}

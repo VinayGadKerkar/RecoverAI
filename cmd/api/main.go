@@ -71,6 +71,10 @@ func main() {
 	webhookHandler := handlers.NewWebhookHandler(dbPool, redisClient, cfg)
 	r.Post("/webhooks/razorpay", webhookHandler.Handle)
 
+	// ─── Test payment endpoint (public, for test-payment.html) ────────────────
+	// Only use in TEST MODE. In production, move inside JWT auth.
+	handlers.RegisterPaymentRoutes(r, dbPool, cfg)
+
 	// ─── Authenticated API routes (JWT required) ──────────────────────────────
 	r.Group(func(r chi.Router) {
 		r.Use(custommiddleware.JWTAuth(cfg.JWTSecret))

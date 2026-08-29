@@ -133,15 +133,14 @@ export async function getRecoveryCases(filters?: {
 
 export async function getRecoveryCase(id: string): Promise<RecoveryCase> {
   // Backend returns { case: {...}, audit_trail: [...], recovery_actions: [...] }
-  const data = await fetchAPI<{ case: RecoveryCase } | RecoveryCase>(`/recovery-cases/${id}`);
-  if ("case" in data) return (data as { case: RecoveryCase }).case;
-  return data as RecoveryCase;
+  const data = await fetchAPI<{ case: RecoveryCase; audit_trail: AuditLogEntry[]; recovery_actions: any[] }>(`/recovery-cases/${id}`);
+  return data.case;
 }
 
 export async function getAuditLogs(caseId: string): Promise<AuditLogEntry[]> {
-  const data = await fetchAPI<{ audit_trail: AuditLogEntry[] } | AuditLogEntry[]>(`/recovery-cases/${caseId}/audit-logs`);
-  if (Array.isArray(data)) return data;
-  return (data as { audit_trail: AuditLogEntry[] }).audit_trail ?? [];
+  // Backend returns everything in one call, so we fetch the whole case
+  const data = await fetchAPI<{ case: RecoveryCase; audit_trail: AuditLogEntry[]; recovery_actions: any[] }>(`/recovery-cases/${caseId}`);
+  return data.audit_trail ?? [];
 }
 
 // ─── Recent Activity ──────────────────────────────────────────────────────────
