@@ -23,14 +23,17 @@ Decision rules you must follow:
 - If amount > 5000000 paise (₹50K): strategy must be escalate_to_merchant or generate_payment_link, never auto-retry
 
 Output JSON schema:
-{
+{{
   "strategy": "retry_payment|generate_payment_link|notify_customer|schedule_retry|escalate_to_merchant|stop_recovery",
   "confidence": <float 0.0-1.0>,
   "delay_minutes": <int>,
   "recovery_window_reason": "<max 100 chars>",
   "message_template": "<string or null>",
-  "reasoning": "<max 150 chars>"
-}
+  "reasoning": "<detailed 3-4 sentence explanation covering why this action, key factors, expected outcome, and risks>",
+  "key_factors": ["<factor 1>", "<factor 2>", "<factor 3>"]
+}}
+
+Example reasoning: "Recommended retry_payment because U30 error indicates temporary debit timeout with 73% historical recovery rate. Payment is recent (2 min old), first attempt, amount (₹999) below risk threshold. Bank APIs show normal status with no outages detected. Expected 65-75% success within 15 minutes."
 
 VALIDATION: Before returning, check that strategy is in the allowed list. If not, default to generate_payment_link."""
 
@@ -91,8 +94,13 @@ async def run_strategist(llm, request, risk_assessment: RiskAssessment) -> Recov
                 "allowed_actions": ", ".join(request.merchant_policy.allowed_actions),
             })
 
+            # DEBUG: Log raw LLM output
+            print(f"🔍 DEBUG Strategist [Attempt {attempt + 1}]: Risk probability={risk_assessment.recovery_probability}, Amount=₹{request.amount_paise/100}")
+            print(f"🔍 DEBUG Raw LLM Output: {json.dumps(result, indent=2)}")
+            
             # Validate strategy is in allowed actions
             strategy_obj = RecoveryStrategy(**result)
+            print(f"✅ DEBUG Validation passed: strategy={strategy_obj.strategy}, confidence={strategy_obj.confidence}")
             
             # Map strategy to action name for validation
             strategy_map = {
@@ -107,15 +115,25 @@ async def run_strategist(llm, request, risk_assessment: RiskAssessment) -> Recov
             action_name = strategy_map.get(strategy_obj.strategy, "payment_link")
             if action_name not in request.merchant_policy.allowed_actions:
                 # Override to payment_link if not allowed
+                print(f"⚠️ DEBUG Strategy '{strategy_obj.strategy}' not in allowed actions, overriding to payment_link")
                 strategy_obj.strategy = "generate_payment_link"
                 strategy_obj.reasoning = f"Original strategy not in allowed actions, defaulting to payment_link"
             
             return strategy_obj
 
         except Exception as e:
+            import traceback
+            print(f"❌ DEBUG Strategist validation failed [Attempt {attempt + 1}]: {str(e)}")
+            print(f"❌ DEBUG Exception type: {type(e).__name__}")
+            print(f"❌ DEBUG Raw result causing error: {result if 'result' in locals() else 'No result'}")
+            print(f"❌ DEBUG Full traceback:")
+            traceback.print_exc()
+            
             if attempt == 0:
+                print(f"🔄 DEBUG Retrying strategist")
                 continue
             # Fallback
+            print(f"⚠️ DEBUG Returning fallback strategy")
             return RecoveryStrategy(
                 strategy="generate_payment_link",
                 confidence=0.5,

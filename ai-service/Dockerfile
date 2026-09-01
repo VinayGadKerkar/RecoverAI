@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Ensure Python stdout/stderr are not buffered for better log visibility
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # Install curl (needed by HEALTHCHECK) and clean up apt cache in one layer

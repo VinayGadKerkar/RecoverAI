@@ -37,7 +37,8 @@ class RecoveryStrategy(BaseModel):
     delay_minutes: int = Field(ge=0)
     recovery_window_reason: str = Field(max_length=100)
     message_template: Optional[str] = None
-    reasoning: str = Field(max_length=150)
+    reasoning: str = Field(max_length=300)  # Increased for detailed explanation
+    key_factors: Optional[list[str]] = Field(default=None, description="List of 3-5 key decision factors")
 
 
 class ExecutorCommand(BaseModel):

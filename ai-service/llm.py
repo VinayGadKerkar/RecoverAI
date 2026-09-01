@@ -8,7 +8,7 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 
-def get_llm(temperature: float = 0.1):
+def get_llm(temperature: float = 0.5):
     """
     Return the configured LLM instance.
     Defaults to Groq llama-3.3-70b-versatile.
@@ -18,7 +18,7 @@ def get_llm(temperature: float = 0.1):
     
     if provider == 'groq':
         return ChatGroq(
-            model='llama-3.3-70b-versatile',
+            model='openai/gpt-oss-120b',
             api_key=os.getenv('GROQ_API_KEY'),
             temperature=temperature,
             max_tokens=1024,

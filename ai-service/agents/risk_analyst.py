@@ -21,7 +21,7 @@ Z9, Z8 must always result in failure_type=non_retryable_auto.
 Timing matters: failures between 19:00-22:00 IST have 30% lower recovery rate — factor this in.
 
 Output JSON schema:
-{
+{{
   "revenue_at_risk_paise": <int>,
   "recovery_probability": <float 0.0-1.0>,
   "failure_category": "TD|BD",
@@ -29,7 +29,7 @@ Output JSON schema:
   "timing_penalty_applied": <bool>,
   "priority": "low|medium|high|critical",
   "reasoning": "<max 120 chars>"
-}"""
+}}"""
 
 USER_TEMPLATE = """Payment ID: {payment_id}
 Amount: ₹{amount_inr:.2f} ({amount_paise} paise)
@@ -82,14 +82,30 @@ async def run_risk_analyst(llm, request) -> RiskAssessment:
                 "priority": request.priority,
             })
 
+            # DEBUG: Log raw LLM output
+            print(f"🔍 DEBUG Risk Analyst [Attempt {attempt + 1}]: Payment={request.payment_id}, ErrorCode={request.upi_error_code}, Amount=₹{request.amount_paise/100}")
+            print(f"🔍 DEBUG Raw LLM Output: {json.dumps(result, indent=2)}")
+            
             # Validate against Pydantic schema
-            return RiskAssessment(**result)
+            validated = RiskAssessment(**result)
+            print(f"✅ DEBUG Validation passed: probability={validated.recovery_probability}, category={validated.failure_category}")
+            return validated
 
         except Exception as e:
+            import traceback
+            print(f"❌ DEBUG Risk Analyst validation failed [Attempt {attempt + 1}]: {str(e)}")
+            print(f"❌ DEBUG Exception type: {type(e).__name__}")
+            print(f"❌ DEBUG Raw result causing error: {result if 'result' in locals() else 'No result'}")
+            print(f"❌ DEBUG Full traceback:")
+            traceback.print_exc()
+            
             if attempt == 0:
                 # Retry once
+                print(f"🔄 DEBUG Retrying risk analyst for payment {request.payment_id}")
                 continue
+            
             # Second failure — return safe default
+            print(f"⚠️ DEBUG Returning fallback for payment {request.payment_id} after 2 failed attempts")
             return RiskAssessment(
                 revenue_at_risk_paise=request.amount_paise,
                 recovery_probability=0.3,

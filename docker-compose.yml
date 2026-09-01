@@ -127,8 +127,6 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
-    environment:
-      LLM_PROVIDER: groq
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
       interval: 10s
