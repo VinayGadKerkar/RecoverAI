@@ -19,7 +19,7 @@ import (
 
 // ─── Kafka Message Structures ─────────────────────────────────────────────────
 
-// RecoveryCommandMessage is consumed from "recovery.commands" topic.
+// RecoveryCommandMessage is consumed from "payment.ai_commands" topic.
 type RecoveryCommandMessage struct {
 	Action              string    `json:"action"` // RETRY_PAYMENT | GENERATE_PAYMENT_LINK | SEND_NOTIFICATION | ESCALATE | STOP
 	PaymentID           string    `json:"payment_id"`
@@ -65,7 +65,7 @@ func NewExecutionWorker(db *pgxpool.Pool, redis *redisclient.Client, producer *k
 	}
 }
 
-// Run starts the Kafka consumer loop for "recovery.commands".
+// Run starts the Kafka consumer loop for "payment.ai_commands".
 func (ew *ExecutionWorker) Run(ctx context.Context) error {
 	consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
 		"bootstrap.servers":    ew.cfg.KafkaBrokers,
@@ -79,11 +79,11 @@ func (ew *ExecutionWorker) Run(ctx context.Context) error {
 	}
 	defer consumer.Close()
 
-	if err := consumer.Subscribe("recovery.commands", nil); err != nil {
+	if err := consumer.Subscribe(kafkapkg.TopicAICommands, nil); err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
 
-	slog.Info("execution worker: started", "topic", "recovery.commands")
+	slog.Info("execution worker: started", "topic", kafkapkg.TopicAICommands)
 
 	for {
 		select {

@@ -51,7 +51,7 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	// ─── Stage 2: Risk Processor (payment.events → revenue.risk) ─────────────
+	// ─── Stage 2: Risk Processor (payment.events → payment.risk_scored) ─────────
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -61,7 +61,7 @@ func main() {
 		}
 	}()
 
-	// ─── Stage 3-4: Validator + AI (revenue.risk → recovery.commands) ────────
+	// ─── Stage 3-4: Validator + AI (payment.risk_scored → payment.ai_commands) ────────
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -71,7 +71,7 @@ func main() {
 		}
 	}()
 
-	// ─── Stage 5: Execution Worker (recovery.commands → recovery.results) ────
+	// ─── Stage 5: Execution Worker (payment.ai_commands → payment.execution_results) ────
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

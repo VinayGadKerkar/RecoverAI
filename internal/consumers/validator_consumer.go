@@ -18,8 +18,8 @@ import (
 	"recoverai/internal/validator"
 )
 
-// ValidatorConsumer consumes from "revenue.risk", runs pre-recovery validation,
-// calls AI service if validation passes, and publishes commands to "recovery.commands".
+// ValidatorConsumer consumes from "payment.risk_scored", runs pre-recovery validation,
+// calls AI service if validation passes, and publishes commands to "payment.ai_commands".
 type ValidatorConsumer struct {
 	db        *pgxpool.Pool
 	redis     *redisclient.Client
@@ -40,7 +40,7 @@ func NewValidatorConsumer(db *pgxpool.Pool, redis *redisclient.Client, producer 
 	}
 }
 
-// Run starts the Kafka consumer loop for "revenue.risk".
+// Run starts the Kafka consumer loop for "payment.risk_scored".
 func (vc *ValidatorConsumer) Run(ctx context.Context) error {
 	consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
 		"bootstrap.servers":    vc.cfg.KafkaBrokers,
@@ -54,11 +54,11 @@ func (vc *ValidatorConsumer) Run(ctx context.Context) error {
 	}
 	defer consumer.Close()
 
-	if err := consumer.Subscribe("revenue.risk", nil); err != nil {
+	if err := consumer.Subscribe(kafkapkg.TopicRiskScored, nil); err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
 
-	slog.Info("validator consumer: started", "topic", "revenue.risk", "group", "validator-consumer-group")
+	slog.Info("validator consumer: started", "topic", kafkapkg.TopicRiskScored, "group", "validator-consumer-group")
 
 	for {
 		select {
@@ -127,6 +127,10 @@ func (vc *ValidatorConsumer) processRiskEvent(ctx context.Context, payload []byt
 			"case_id", caseID,
 			"reason", validationResult.SkipReason,
 		)
+		
+		// Publish to recovery.blocked topic for analytics
+		vc.publishBlocked(ctx, caseID.String(), event.PaymentID, validationResult.SkipReason)
+		
 		// Case already updated by validator
 		return nil
 	}
@@ -222,14 +226,14 @@ func (vc *ValidatorConsumer) publishCommand(ctx context.Context, cmd *RecoveryCo
 		return fmt.Errorf("marshal command: %w", err)
 	}
 
-	if err := vc.producer.Publish(ctx, "recovery.commands", cmd.CaseID, payload); err != nil {
-		return fmt.Errorf("publish to recovery.commands: %w", err)
+	if err := vc.producer.Publish(ctx, kafkapkg.TopicAICommands, cmd.CaseID, payload); err != nil {
+		return fmt.Errorf("publish to %s: %w", kafkapkg.TopicAICommands, err)
 	}
 
 	slog.Info("validator consumer: command published",
 		"case_id", cmd.CaseID,
 		"action", cmd.Action,
-		"topic", "recovery.commands",
+		"topic", kafkapkg.TopicAICommands,
 	)
 
 	return nil
@@ -244,7 +248,12 @@ func (vc *ValidatorConsumer) publishBlocked(ctx context.Context, caseID, payment
 		"blocked_at": time.Now(),
 	}
 	payload, _ := json.Marshal(blockedEvent)
-	vc.producer.Publish(ctx, "recovery.blocked", caseID, payload)
+	
+	if err := vc.producer.Publish(ctx, kafkapkg.TopicRecoveryBlocked, caseID, payload); err != nil {
+		slog.Error("validator consumer: failed to publish blocked event", "error", err, "case_id", caseID)
+	} else {
+		slog.Info("validator consumer: published to recovery.blocked", "case_id", caseID, "reason", reason)
+	}
 }
 
 func (vc *ValidatorConsumer) auditLog(ctx context.Context, caseID, action, reason string) {

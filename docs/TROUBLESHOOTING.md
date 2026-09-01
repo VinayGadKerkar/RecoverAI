@@ -590,9 +590,9 @@ docker exec recoverai-kafka-1 kafka-topics.sh \
 # 3. Restart kafka-init service
 docker-compose restart kafka-init
 
-# 4. Verify all 6 topics exist:
-# payment.events, revenue.risk, payment.validated_for_ai,
-# payment.ai_commands, payment.execution_results, payment.deadletter
+# 4. Verify all 7 topics exist:
+# payment.events, payment.risk_scored, payment.validated_for_ai,
+# payment.ai_commands, payment.execution_results, recovery.blocked, payment.dead_letter
 ```
 
 **Prevention:**
@@ -602,7 +602,63 @@ docker-compose restart kafka-init
 
 ---
 
-### Issue 11: Consumer Group Lag
+### Issue 11: Missing recovery.blocked Topic
+
+**Problem:** Analytics "Honest Exceptions" endpoint has no data or validator-blocked cases not tracked.
+
+**Symptoms:**
+```
+GET /api/v1/analytics/honest-exceptions returns empty array
+```
+
+**Root Cause:** The `recovery.blocked` topic was not created, so validator-blocked cases aren't published to Kafka.
+
+**Solution:**
+
+```bash
+# 1. Check if topic exists
+docker exec recoverai-kafka-1 /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 --list | grep recovery.blocked
+
+# 2. If missing, recreate Kafka topics
+docker-compose stop kafka-init
+docker-compose up kafka-init
+
+# 3. Verify topic was created
+docker exec recoverai-kafka-1 /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 --describe --topic recovery.blocked
+
+# Should show:
+# Topic: recovery.blocked
+# PartitionCount: 6
+# ReplicationFactor: 1
+
+# 4. Restart worker to start publishing
+docker-compose restart worker
+
+# 5. Test by sending a webhook that will be blocked
+# (e.g., very low amount that fails ROI check)
+```
+
+**Verification:**
+
+```bash
+# Check if messages are being published
+docker exec recoverai-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic recovery.blocked \
+  --from-beginning \
+  --max-messages 5
+```
+
+**Prevention:**
+- Always verify all 7 topics exist after Kafka initialization
+- Check `internal/kafka/topics.go` for topic constants
+- Monitor validator consumer logs for "published to recovery.blocked"
+
+---
+
+### Issue 12: Consumer Group Lag
 
 **Problem:** Messages piling up in Kafka, not being consumed.
 
@@ -646,7 +702,7 @@ curl http://localhost:8001/health  # mock AI
 
 ## 🔧 API & Backend Issues
 
-### Issue 12: Webhook Signature Verification Fails
+### Issue 13: Webhook Signature Verification Fails
 
 **Problem:** Razorpay webhooks rejected with "invalid signature".
 
@@ -693,7 +749,7 @@ Invoke-RestMethod -Uri "http://localhost:8080/webhooks/razorpay" `
 
 ---
 
-### Issue 13: Out-of-Order Webhook Events
+### Issue 14: Out-of-Order Webhook Events
 
 **Problem:** `payment.captured` arrives before `payment.failed`, causing incorrect state.
 
@@ -734,7 +790,7 @@ curl -X POST http://localhost:8080/webhooks/razorpay \
 
 ## ⚡ Performance Issues
 
-### Issue 14: Slow AI Response Times
+### Issue 15: Slow AI Response Times
 
 **Problem:** AI service taking >5 seconds per request.
 
@@ -788,7 +844,7 @@ def analyze_payment(payment_id, error_code, amount):
 
 ---
 
-### Issue 15: High Database Connection Count
+### Issue 16: High Database Connection Count
 
 **Problem:** PostgreSQL max connections exceeded.
 

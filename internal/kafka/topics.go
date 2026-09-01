@@ -17,6 +17,9 @@ const (
 	// Stage 5 → Audit: Execution results.
 	TopicExecutionResults = "payment.execution_results"
 
+	// Validator → Analytics: Cases blocked before AI (outage_batched, not_worth_recovering, etc.)
+	TopicRecoveryBlocked = "recovery.blocked"
+
 	// Dead-letter queue for unrecoverable events.
 	TopicDeadLetter = "payment.dead_letter"
 )

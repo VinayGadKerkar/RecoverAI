@@ -234,7 +234,7 @@ type KafkaPaymentEvent struct {
 	ReceivedAt      time.Time              `json:"received_at"`
 }
 
-// RevenueRiskEvent is produced to "revenue.risk".
+// RevenueRiskEvent is produced to "payment.risk_scored".
 type RevenueRiskEvent struct {
 	EventID         string    `json:"event_id"`
 	PaymentID       string    `json:"payment_id"`
@@ -413,7 +413,7 @@ func (rp *RiskProcessor) processMessage(ctx context.Context, payload []byte) err
 		return fmt.Errorf("create recovery case: %w", err)
 	}
 
-	// Step 6: Publish to revenue.risk topic
+	// Step 6: Publish to payment.risk_scored topic
 	riskEvent := RevenueRiskEvent{
 		EventID:            uuid.New().String(),
 		PaymentID:          event.PaymentID,
@@ -580,12 +580,12 @@ func (rp *RiskProcessor) createRecoveryCase(
 	return caseID, err
 }
 
-// publishRevenueRisk publishes a RevenueRiskEvent to the "revenue.risk" topic.
+// publishRevenueRisk publishes a RevenueRiskEvent to the "payment.risk_scored" topic.
 func (rp *RiskProcessor) publishRevenueRisk(ctx context.Context, event *RevenueRiskEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
 
-	return rp.producer.Publish(ctx, "revenue.risk", event.PaymentID, payload)
+	return rp.producer.Publish(ctx, kafkapkg.TopicRiskScored, event.PaymentID, payload)
 }

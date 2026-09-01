@@ -540,7 +540,7 @@ docker-compose -f docker-compose.prod.yml up -d
 | Python Modules | 8 |
 | React Components | 20+ |
 | Database Tables | 9 |
-| Kafka Topics | 6 |
+| Kafka Topics | 7 |
 | API Endpoints | 15+ |
 | Docker Services | 9 |
 | Documentation Pages | 10 |
