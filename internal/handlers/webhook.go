@@ -357,7 +357,7 @@ func (h *WebhookHandler) handleCustomerSelfRecovery(razorpayEventID string, payl
 		FROM recovery_cases rc
 		JOIN payments pay ON pay.id = rc.payment_id
 		WHERE pay.razorpay_payment_id = $1
-		  AND rc.status IN ('open', 'in_progress', 'outage_batched', 'pending_human_approval')
+		  AND (rc.status IN ('open', 'in_progress', 'failed', 'outage_batched', 'pending_human_approval') OR rc.status = '' OR rc.status IS NULL)
 		LIMIT 1
 	`, p.ID).Scan(&caseID, &currentStatus)
 

@@ -248,7 +248,12 @@ func (vc *ValidatorConsumer) publishBlocked(ctx context.Context, caseID, payment
 }
 
 func (vc *ValidatorConsumer) auditLog(ctx context.Context, caseID, action, reason string) {
-	metadata, _ := json.Marshal(map[string]string{"reason": reason})
+	metadata, _ := json.Marshal(map[string]interface{}{
+		"reason":     reason,
+		"action":     action,
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"service":    "validator_consumer",
+	})
 	vc.db.Exec(ctx, `
 		INSERT INTO audit_logs (entity_type, entity_id, actor, action, metadata)
 		VALUES ('recovery_case', $1, 'validator_consumer', $2, $3)

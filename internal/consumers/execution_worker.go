@@ -311,7 +311,12 @@ func (ew *ExecutionWorker) updateCaseStatus(ctx context.Context, caseID, status 
 }
 
 func (ew *ExecutionWorker) auditLog(ctx context.Context, caseID, action, reason string) {
-	metadata, _ := json.Marshal(map[string]string{"reason": reason})
+	metadata, _ := json.Marshal(map[string]interface{}{
+		"reason":     reason,
+		"action":     action,
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"service":    "execution_worker",
+	})
 	ew.db.Exec(ctx, `
 		INSERT INTO audit_logs (entity_type, entity_id, actor, action, metadata)
 		VALUES ('recovery_case', $1, 'execution_worker', $2, $3)

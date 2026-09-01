@@ -144,7 +144,12 @@ func (rp *ResultProcessor) processResult(ctx context.Context, payload []byte) er
 }
 
 func (rp *ResultProcessor) auditLog(ctx context.Context, caseID, action, reason string) {
-	metadata, _ := json.Marshal(map[string]string{"reason": reason})
+	metadata, _ := json.Marshal(map[string]interface{}{
+		"reason":     reason,
+		"action":     action,
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"service":    "result_processor",
+	})
 	rp.db.Exec(ctx, `
 		INSERT INTO audit_logs (entity_type, entity_id, actor, action, metadata)
 		VALUES ('recovery_case', $1, 'result_processor', $2, $3)
