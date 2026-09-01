@@ -52,7 +52,7 @@ export default function CaseDetailPage() {
   const isCustomerSelfRecovered = caseData.status === "customer_self_recovered";
 
   return (
-    <div className="p-8">
+    <div className="min-h-screen bg-background p-8">
       <div className="mb-6">
         <h2 className="text-3xl font-bold text-foreground">Case Details</h2>
         <p className="text-sm text-muted-foreground">Case ID: {caseData.id}</p>
@@ -82,35 +82,9 @@ export default function CaseDetailPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Left Column: Full Audit Timeline (2/3 width) */}
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Full Audit Timeline</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                All actors and decisions in order
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div className="relative space-y-6">
-                {/* Timeline vertical line */}
-                <div className="absolute left-[15px] top-0 h-full w-[2px] bg-border"></div>
-
-                {auditLogs && auditLogs.length > 0 ? (
-                  auditLogs.map((log: any, idx: number) => (
-                    <TimelineItem key={log.id} log={log} isLast={idx === auditLogs.length - 1} />
-                  ))
-                ) : (
-                  <p className="text-sm text-muted-foreground">No audit logs available</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Right Column: Breakdown Panels (1/3 width) */}
-        <div className="space-y-6">
+      <div className="flex flex-col gap-6 lg:flex-row">
+        {/* Right Column First (Mobile) / Sidebar (Desktop) - 1/3 width on large screens */}
+        <div className="w-full lg:w-1/3 lg:order-2 space-y-6">
           {/* Case Summary */}
           <Card>
             <CardHeader>
@@ -120,7 +94,7 @@ export default function CaseDetailPage() {
               <div>
                 <p className="text-xs text-muted-foreground">Status</p>
                 <Badge className="mt-1">
-                  {caseData.status.replace(/_/g, " ")}
+                  {caseData.status ? caseData.status.replace(/_/g, " ") : "processing"}
                 </Badge>
               </div>
               <div>
@@ -136,10 +110,28 @@ export default function CaseDetailPage() {
                 </p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Priority</p>
-                <p className="text-sm font-medium text-foreground uppercase">
-                  {caseData.priority}
+                <p className="text-xs text-muted-foreground">Recovery Rate</p>
+                <p className="text-sm font-bold text-foreground">
+                  {caseData.amount_paise > 0 
+                    ? `${((caseData.amount_recovered_paise / caseData.amount_paise) * 100).toFixed(1)}%`
+                    : '0%'}
                 </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Priority</p>
+                <span
+                  className={`text-sm font-bold uppercase ${
+                    caseData.priority === "critical"
+                      ? "text-red-400"
+                      : caseData.priority === "high"
+                      ? "text-orange-400"
+                      : caseData.priority === "medium"
+                      ? "text-yellow-400"
+                      : "text-slate-400"
+                  }`}
+                >
+                  {caseData.priority}
+                </span>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Retry Count</p>
@@ -207,29 +199,75 @@ export default function CaseDetailPage() {
 
           {/* AI Decision */}
           {caseData.ai_strategy && (
-            <Card>
+            <Card className="border-l-4 border-l-cyan-500">
               <CardHeader>
-                <CardTitle>AI Decision</CardTitle>
+                <div className="flex items-center gap-2">
+                  <svg className="h-5 w-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  <CardTitle>AI Decision</CardTitle>
+                </div>
               </CardHeader>
-              <CardContent className="space-y-2">
-                <div>
-                  <p className="text-xs text-muted-foreground">Strategy</p>
-                  <p className="text-sm font-medium text-foreground">
-                    {caseData.ai_strategy.strategy || "—"}
+              <CardContent className="space-y-4">
+                {/* Strategy */}
+                <div className="rounded-lg bg-cyan-950/30 border border-cyan-900/50 p-3">
+                  <p className="text-xs font-semibold text-cyan-400 mb-1">RECOMMENDED STRATEGY</p>
+                  <p className="text-base font-bold text-foreground">
+                    {caseData.ai_strategy.strategy?.replace(/_/g, " ").toUpperCase() || "—"}
                   </p>
                 </div>
+
+                {/* Confidence Bar */}
                 <div>
-                  <p className="text-xs text-muted-foreground">Confidence</p>
-                  <p className="text-sm font-medium text-foreground">
-                    {((caseData.ai_strategy.confidence || 0) * 100).toFixed(1)}%
-                  </p>
-                </div>
-                {caseData.ai_strategy.reasoning && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Reasoning</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {caseData.ai_strategy.reasoning}
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-medium text-muted-foreground">Confidence Level</p>
+                    <p className="text-sm font-bold text-foreground">
+                      {((caseData.ai_strategy.confidence || 0) * 100).toFixed(1)}%
                     </p>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                    <div 
+                      className={`h-full transition-all ${
+                        (caseData.ai_strategy.confidence || 0) >= 0.8 
+                          ? 'bg-green-500' 
+                          : (caseData.ai_strategy.confidence || 0) >= 0.5 
+                          ? 'bg-yellow-500' 
+                          : 'bg-red-500'
+                      }`}
+                      style={{ width: `${((caseData.ai_strategy.confidence || 0) * 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* Reasoning */}
+                {caseData.ai_strategy.reasoning && (
+                  <div className="rounded-lg bg-slate-800/50 border border-slate-700 p-3">
+                    <div className="flex items-start gap-2 mb-2">
+                      <svg className="h-4 w-4 text-slate-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-300 mb-1">AI REASONING</p>
+                        <p className="text-sm text-slate-300 leading-relaxed">
+                          {caseData.ai_strategy.reasoning}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Key Factors (if available in metadata) */}
+                {caseData.ai_strategy.factors && Array.isArray(caseData.ai_strategy.factors) && (
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground mb-2">KEY FACTORS CONSIDERED</p>
+                    <div className="space-y-1">
+                      {caseData.ai_strategy.factors.map((factor: string, idx: number) => (
+                        <div key={idx} className="flex items-start gap-2 text-xs">
+                          <span className="text-cyan-400 mt-0.5">▸</span>
+                          <span className="text-slate-300">{factor}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -258,7 +296,7 @@ export default function CaseDetailPage() {
                 <div>
                   <p className="text-xs text-muted-foreground">Final Status</p>
                   <Badge className="mt-1">
-                    {caseData.status.replace(/_/g, " ")}
+                    {caseData.status ? caseData.status.replace(/_/g, " ") : "processing"}
                   </Badge>
                 </div>
                 {caseData.resolved_at && (
@@ -271,6 +309,32 @@ export default function CaseDetailPage() {
                   <div className="mt-2 rounded-md bg-teal-950/50 border border-teal-900/50 p-2">
                     <p className="text-xs text-teal-400">Partial recovery occurred</p>
                   </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Left Column: Full Audit Timeline - 2/3 width on large screens */}
+        <div className="w-full lg:w-2/3 lg:order-1">
+          <Card>
+            <CardHeader>
+              <CardTitle>Full Audit Timeline</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                All actors and decisions in order
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="relative space-y-6">
+                {/* Timeline vertical line */}
+                <div className="absolute left-[15px] top-0 h-full w-[2px] bg-border"></div>
+
+                {auditLogs && auditLogs.length > 0 ? (
+                  auditLogs.map((log: any, idx: number) => (
+                    <TimelineItem key={log.id} log={log} isLast={idx === auditLogs.length - 1} />
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground">No audit logs available</p>
                 )}
               </div>
             </CardContent>

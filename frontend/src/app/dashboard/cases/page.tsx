@@ -198,7 +198,7 @@ export default function RecoveryCasesPage() {
                       </td>
                       <td className="whitespace-nowrap px-6 py-4">
                         <Badge variant={c.status as any}>
-                          {c.status.replace(/_/g, " ")}
+                          {c.status ? c.status.replace(/_/g, " ") : "Processing"}
                         </Badge>
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
