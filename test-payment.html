@@ -131,8 +131,19 @@
         <div class="info-box">
             <strong>📋 Test Cards:</strong>
             <div style="margin-top: 8px;">
-                ✅ <span class="code">4111 1111 1111 1111</span> - SUCCESS<br>
-                ❌ <span class="code">4000 0025 0000 3155</span> - FAILS (perfect for testing)
+                ✅ <span class="code">4111 1111 1111 1111</span> - SUCCESS (no recovery needed)<br>
+                ❌ <span class="code">4000 0025 0000 3155</span> - FAILS → Triggers AI Recovery!
+            </div>
+        </div>
+
+        <div class="info-box" style="border-left-color: #10b981;">
+            <strong>🎯 Complete Recovery Flow Test:</strong>
+            <div style="margin-top: 8px; font-size: 12px; line-height: 1.6;">
+                1️⃣ Click <strong>"Pay & Fail"</strong><br>
+                2️⃣ Use failing card: <span class="code">4000 0025 0000 3155</span><br>
+                3️⃣ Payment fails → AI analyzes → Recommends RETRY<br>
+                4️⃣ Mock retry executes (U30 = 75% success rate)<br>
+                5️⃣ Check dashboard for <strong>recovered</strong> status! ✨
             </div>
         </div>
 
@@ -179,6 +190,17 @@
         </div>
 
         <div id="status" class="status"></div>
+
+        <div class="info-box" style="margin-top: 20px; background: #fef3c7; border-left-color: #f59e0b;">
+            <strong>👀 What to Watch:</strong>
+            <div style="margin-top: 8px; font-size: 12px; line-height: 1.6;">
+                <strong>Worker Logs:</strong> <span class="code">docker logs recoverai-worker-1 -f</span><br>
+                Look for: <span class="code">mock_retry: simulated SUCCESS</span><br><br>
+                <strong>Database Check:</strong><br>
+                <span class="code" style="font-size: 10px;">docker exec recoverai-postgres-1 psql -U recoverai -d recoverai -c "SELECT status, amount_recovered FROM recovery_cases ORDER BY created_at DESC LIMIT 1;"</span><br><br>
+                <strong>Dashboard:</strong> <a href="http://localhost:3000/dashboard" target="_blank" style="color: #667eea;">Open Dashboard</a> → See recovered payments!
+            </div>
+        </div>
     </div>
 
     <script>

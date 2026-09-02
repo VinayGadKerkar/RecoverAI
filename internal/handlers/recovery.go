@@ -619,7 +619,7 @@ func (h *recoveryHandler) ApproveCases(w http.ResponseWriter, r *http.Request) {
 		publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		if err := h.producer.Publish(publishCtx, kafkapkg.TopicAICommands, caseID, commandPayload); err != nil {
+		if err := h.producer.Publish(publishCtx, kafka.TopicAICommands, caseID, commandPayload); err != nil {
 			slog.Error("recovery/approve: kafka publish failed", "case_id", caseID, "error", err)
 			// Status already updated — still return 200, log the failure
 		}

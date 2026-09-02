@@ -439,6 +439,13 @@ func (rp *RiskProcessor) processMessage(ctx context.Context, payload []byte) err
 		return fmt.Errorf("publish revenue risk: %w", err)
 	}
 
+	// Publish WebSocket audit event
+	rp.publishWebSocketEvent(ctx, caseID, event.PaymentID, "risk_engine", "risk_scored", map[string]interface{}{
+		"priority":             priority,
+		"recovery_probability": riskScore,
+		"bank_outage":          bankOutageDetected,
+	})
+
 	slog.Info("risk processor: event processed",
 		"payment_id", event.PaymentID,
 		"case_id", caseID,
@@ -588,4 +595,35 @@ func (rp *RiskProcessor) publishRevenueRisk(ctx context.Context, event *RevenueR
 	}
 
 	return rp.producer.Publish(ctx, kafkapkg.TopicRiskScored, event.PaymentID, payload)
+}
+
+// publishWebSocketEvent publishes an audit event to the WebSocket events topic
+func (rp *RiskProcessor) publishWebSocketEvent(ctx context.Context, caseID, paymentID, actor, action string, metadata map[string]interface{}) {
+	event := map[string]interface{}{
+		"type":       "audit_event",
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"case_id":    caseID,
+		"payment_id": paymentID,
+		"data": map[string]interface{}{
+			"actor":    actor,
+			"action":   action,
+			"metadata": metadata,
+		},
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		slog.Error("risk processor: failed to marshal websocket event", "error", err)
+		return
+	}
+
+	// Fire and forget - don't block on WebSocket publishing
+	go func() {
+		publishCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		
+		if err := rp.producer.Publish(publishCtx, kafkapkg.TopicWebSocketEvents, caseID, payload); err != nil {
+			slog.Error("risk processor: failed to publish websocket event", "error", err)
+		}
+	}()
 }

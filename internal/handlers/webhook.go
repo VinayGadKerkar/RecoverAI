@@ -341,7 +341,8 @@ func (h *WebhookHandler) buildKafkaEvent(razorpayEventID string, payload Razorpa
 	return event
 }
 
-// handleCustomerSelfRecovery checks if a recovery case exists and marks it as customer_self_recovered.
+// handleCustomerSelfRecovery checks if a recovery case exists and marks it as recovered.
+// This handles BOTH customer self-recovery AND automated retry success.
 // Runs async — failure does not block the webhook response.
 func (h *WebhookHandler) handleCustomerSelfRecovery(razorpayEventID string, payload RazorpayWebhookPayload) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -352,56 +353,95 @@ func (h *WebhookHandler) handleCustomerSelfRecovery(razorpayEventID string, payl
 
 	// Check if a recovery case exists for this payment
 	var caseID, currentStatus string
+	var retryCount int
 	err := h.db.QueryRow(ctx, `
-		SELECT rc.id, rc.status
+		SELECT rc.id, rc.status, rc.retry_count
 		FROM recovery_cases rc
 		JOIN payments pay ON pay.id = rc.payment_id
 		WHERE pay.razorpay_payment_id = $1
 		  AND (rc.status IN ('open', 'in_progress', 'failed', 'outage_batched', 'pending_human_approval') OR rc.status = '' OR rc.status IS NULL)
 		LIMIT 1
-	`, p.ID).Scan(&caseID, &currentStatus)
+	`, p.ID).Scan(&caseID, &currentStatus, &retryCount)
 
 	if err != nil {
 		// No active recovery case found — normal capture flow
 		return
 	}
 
-	slog.Info("webhook: customer self-recovered",
+	// Determine if this was an automated retry or customer self-recovery
+	isAutomatedRetry := retryCount > 0
+	recoveryStatus := "customer_self_recovered"
+	actor := "customer_self"
+	action := "self_recovered"
+
+	if isAutomatedRetry {
+		// This was our automated retry that succeeded!
+		recoveryStatus = "recovered"
+		actor = "system_automated"
+		action = "automated_retry_success"
+	}
+
+	slog.Info("webhook: payment recovered",
 		"case_id", caseID,
 		"payment_id", p.ID,
+		"recovery_type", recoveryStatus,
 		"previous_status", currentStatus,
 		"captured_amount", capturedAmount,
+		"retry_count", retryCount,
 	)
 
-	// Update recovery case
+	// Update recovery case to recovered status
 	_, err = h.db.Exec(ctx, `
 		UPDATE recovery_cases
-		SET status = 'customer_self_recovered',
-		    amount_recovered = $1,
+		SET status = $1,
+		    amount_recovered = $2,
 		    resolved_at = NOW(),
 		    updated_at = NOW()
-		WHERE id = $2
-	`, capturedAmount, caseID)
+		WHERE id = $3
+	`, recoveryStatus, capturedAmount, caseID)
 	if err != nil {
-		slog.Error("webhook: failed to update customer_self_recovered case", "error", err, "case_id", caseID)
+		slog.Error("webhook: failed to update recovered case", "error", err, "case_id", caseID)
 		return
 	}
 
-	// Cancel any pending actions
-	h.db.Exec(ctx, `
+	// Update any in-progress recovery actions to success
+	_, err = h.db.Exec(ctx, `
 		UPDATE recovery_actions
-		SET status = 'skipped', updated_at = NOW()
-		WHERE case_id = $1 AND status = 'pending'
-	`, caseID)
+		SET status = 'success',
+		    result = $1,
+		    executed_at = NOW(),
+		    updated_at = NOW()
+		WHERE case_id = $2 AND status IN ('pending', 'in_progress')
+	`, json.RawMessage(`{"outcome":"payment_captured","amount_recovered":`+string(capturedAmount)+`}`), caseID)
+	if err != nil {
+		slog.Error("webhook: failed to update recovery actions", "error", err, "case_id", caseID)
+	}
 
 	// Audit log
 	metadata, _ := json.Marshal(map[string]interface{}{
 		"razorpay_event_id": razorpayEventID,
 		"captured_amount":   capturedAmount,
 		"previous_status":   currentStatus,
+		"retry_count":       retryCount,
+		"recovery_type":     recoveryStatus,
 	})
 	h.db.Exec(ctx, `
 		INSERT INTO audit_logs (entity_type, entity_id, actor, action, metadata)
-		VALUES ('recovery_case', $1, 'customer_self', 'self_recovered', $2)
-	`, caseID, metadata)
+		VALUES ('recovery_case', $1, $2, $3, $4)
+	`, caseID, actor, action, metadata)
+	
+	// Publish recovery success to WebSocket
+	if h.producer != nil {
+		recoveryEvent, _ := json.Marshal(map[string]interface{}{
+			"event_type":      "recovery_success",
+			"case_id":         caseID,
+			"payment_id":      p.ID,
+			"amount_recovered": capturedAmount,
+			"recovery_type":   recoveryStatus,
+			"timestamp":       time.Now().UTC().Format(time.RFC3339),
+		})
+		publishCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		h.producer.Publish(publishCtx, kafka.TopicWebSocketEvents, caseID, recoveryEvent)
+	}
 }

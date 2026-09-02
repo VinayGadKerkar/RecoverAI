@@ -1,10 +1,15 @@
 package consumers
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
@@ -52,6 +57,7 @@ type ExecutionWorker struct {
 	cfg          *config.Config
 	policyEngine *policy.Engine
 	razorpay     *services.RazorpayService
+	mockRetry    *services.MockRetrySimulator // For simulated flow
 }
 
 func NewExecutionWorker(db *pgxpool.Pool, redis *redisclient.Client, producer *kafkapkg.Producer, cfg *config.Config) *ExecutionWorker {
@@ -62,6 +68,7 @@ func NewExecutionWorker(db *pgxpool.Pool, redis *redisclient.Client, producer *k
 		cfg:          cfg,
 		policyEngine: policy.NewEngine(),
 		razorpay:     services.NewRazorpayService(cfg),
+		mockRetry:    services.NewMockRetrySimulator(db),
 	}
 }
 
@@ -165,6 +172,19 @@ func (ew *ExecutionWorker) processCommand(ctx context.Context, payload []byte) e
 		result.ExecutionResult = execResult
 		result.AmountRecovered = execResult["amount_recovered"].(int64)
 		result.PartialRecovery = execResult["partial_recovery"].(bool)
+		
+		// Publish WebSocket event for action executed
+		ew.publishWebSocketEvent(ctx, cmd.CaseID, cmd.PaymentID, "execution_worker", "action_executed", map[string]interface{}{
+			"action_type": cmd.Action,
+		})
+		
+		// If payment was recovered, publish special event and trigger metric update
+		if result.AmountRecovered > 0 {
+			ew.publishWebSocketEvent(ctx, cmd.CaseID, cmd.PaymentID, "execution_worker", "payment_captured", map[string]interface{}{
+				"amount_paise": result.AmountRecovered,
+			})
+			ew.publishMetricUpdate(ctx)
+		}
 	}
 
 	// ─── Post-Execution: Set Cooldown + Increment Retry Count ────────────────
@@ -199,15 +219,140 @@ func (ew *ExecutionWorker) execute(ctx context.Context, cmd RecoveryCommandMessa
 }
 
 func (ew *ExecutionWorker) executeRetry(ctx context.Context, razorpayPaymentID string) (map[string]interface{}, error) {
-	// Call Razorpay API: POST /v1/payments/{id}/retry (Test Mode)
 	slog.Info("executing retry", "payment_id", razorpayPaymentID)
-	// TODO: implement Razorpay retry API call
+	
+	// Get case details for simulation
+	var caseID, errorCode string
+	var amount int64
+	err := ew.db.QueryRow(ctx, `
+		SELECT rc.id, COALESCE(rc.upi_error_code, 'UNKNOWN'), rc.revenue_at_risk
+		FROM recovery_cases rc
+		JOIN payments p ON p.id = rc.payment_id
+		WHERE p.razorpay_payment_id = $1
+		  AND rc.status = 'in_progress'
+		LIMIT 1
+	`, razorpayPaymentID).Scan(&caseID, &errorCode, &amount)
+	
+	if err != nil {
+		return nil, fmt.Errorf("load case details: %w", err)
+	}
+
+	// Update retry count immediately
+	if err := ew.mockRetry.UpdateRetryCount(ctx, caseID); err != nil {
+		slog.Error("failed to update retry count", "case_id", caseID, "error", err)
+	}
+
+	// Simulate the retry with realistic latency and success rates
+	result, err := ew.mockRetry.SimulateRetry(ctx, razorpayPaymentID, errorCode, amount)
+	if err != nil {
+		return nil, fmt.Errorf("mock retry failed: %w", err)
+	}
+
+	// If retry succeeded, publish payment.captured webhook
+	if result.Success {
+		slog.Info("retry succeeded - publishing payment.captured webhook",
+			"payment_id", razorpayPaymentID,
+			"case_id", caseID,
+			"amount", amount,
+		)
+		
+		// Publish webhook asynchronously (simulates Razorpay sending webhook)
+		go ew.publishSuccessWebhook(razorpayPaymentID, amount, errorCode)
+		
+		return map[string]interface{}{
+			"action":             "retry",
+			"payment_id":         razorpayPaymentID,
+			"amount_recovered":   amount,
+			"partial_recovery":   false,
+			"retry_duration_ms":  result.RetryDuration,
+			"razorpay_response":  result.RazorpayResponse,
+		}, nil
+	}
+	
+	// Retry failed - log and return
+	slog.Info("retry failed - payment still failed",
+		"payment_id", razorpayPaymentID,
+		"case_id", caseID,
+		"error_code", errorCode,
+	)
+	
 	return map[string]interface{}{
-		"action":           "retry",
-		"payment_id":       razorpayPaymentID,
-		"amount_recovered": int64(0),
-		"partial_recovery": false,
+		"action":             "retry",
+		"payment_id":         razorpayPaymentID,
+		"amount_recovered":   int64(0),
+		"partial_recovery":   false,
+		"retry_duration_ms":  result.RetryDuration,
+		"retry_failed":       true,
+		"razorpay_response":  result.RazorpayResponse,
 	}, nil
+}
+
+// publishSuccessWebhook simulates Razorpay sending a payment.captured webhook
+// This is called when our mock retry succeeds
+func (ew *ExecutionWorker) publishSuccessWebhook(paymentID string, amount int64, originalErrorCode string) {
+	// Small delay to simulate webhook delivery latency
+	time.Sleep(1 * time.Second)
+	
+	// Compute HMAC signature for the webhook
+	secret := ew.cfg.RazorpayWebhookSecret
+	if secret == "" {
+		secret = "recoverai_secret" // Fallback for dev
+	}
+	
+	webhookPayload := fmt.Sprintf(`{
+		"entity": "event",
+		"account_id": "acc_test",
+		"event": "payment.captured",
+		"contains": ["payment"],
+		"payload": {
+			"payment": {
+				"entity": {
+					"id": "%s",
+					"amount": %d,
+					"currency": "INR",
+					"status": "captured",
+					"method": "upi",
+					"description": "Recovered payment (originally failed with %s)",
+					"email": "recovered@example.com",
+					"contact": "+919876543210",
+					"created_at": %d
+				}
+			}
+		},
+		"created_at": %d
+	}`, paymentID, amount, originalErrorCode, time.Now().Unix(), time.Now().Unix())
+	
+	// Compute signature
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(webhookPayload))
+	signature := hex.EncodeToString(mac.Sum(nil))
+	
+	// Send webhook to our own API (use Docker service name, not localhost)
+	apiURL := "http://api:8080/webhooks/razorpay"
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer([]byte(webhookPayload)))
+	if err != nil {
+		slog.Error("failed to create webhook request", "error", err)
+		return
+	}
+	
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Razorpay-Signature", signature)
+	req.Header.Set("X-Razorpay-Event-Id", fmt.Sprintf("evt_recovery_%s_%d", paymentID, time.Now().Unix()))
+	
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Error("failed to send success webhook", "error", err, "payment_id", paymentID)
+		return
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		slog.Error("success webhook returned non-200", "status", resp.StatusCode, "payment_id", paymentID)
+		return
+	}
+	
+	slog.Info("success webhook published", "payment_id", paymentID, "amount", amount)
 }
 
 func (ew *ExecutionWorker) executePaymentLink(ctx context.Context, razorpayPaymentID string, params map[string]interface{}) (map[string]interface{}, error) {
@@ -326,4 +471,55 @@ func (ew *ExecutionWorker) auditLog(ctx context.Context, caseID, action, reason 
 func (ew *ExecutionWorker) publishResult(ctx context.Context, result *RecoveryResultMessage) error {
 	payload, _ := json.Marshal(result)
 	return ew.producer.Publish(ctx, "recovery.results", result.CaseID, payload)
+}
+
+// publishWebSocketEvent publishes an audit event to the WebSocket events topic
+func (ew *ExecutionWorker) publishWebSocketEvent(ctx context.Context, caseID, paymentID, actor, action string, metadata map[string]interface{}) {
+	event := map[string]interface{}{
+		"type":       "audit_event",
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"case_id":    caseID,
+		"payment_id": paymentID,
+		"data": map[string]interface{}{
+			"actor":    actor,
+			"action":   action,
+			"metadata": metadata,
+		},
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		slog.Error("execution worker: failed to marshal websocket event", "error", err)
+		return
+	}
+
+	// Fire and forget - don't block on WebSocket publishing
+	go func() {
+		publishCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		
+		if err := ew.producer.Publish(publishCtx, kafkapkg.TopicWebSocketEvents, caseID, payload); err != nil {
+			slog.Error("execution worker: failed to publish websocket event", "error", err)
+		}
+	}()
+}
+
+// publishMetricUpdate triggers a metric update broadcast
+func (ew *ExecutionWorker) publishMetricUpdate(ctx context.Context) {
+	event := map[string]interface{}{
+		"type":      "metric_update",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+
+	go func() {
+		publishCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		
+		ew.producer.Publish(publishCtx, kafkapkg.TopicWebSocketEvents, "metrics", payload)
+	}()
 }

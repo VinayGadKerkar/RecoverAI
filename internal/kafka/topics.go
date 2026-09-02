@@ -22,4 +22,7 @@ const (
 
 	// Dead-letter queue for unrecoverable events.
 	TopicDeadLetter = "payment.dead_letter"
+
+	// WebSocket events for real-time dashboard updates.
+	TopicWebSocketEvents = "websocket.events"
 )

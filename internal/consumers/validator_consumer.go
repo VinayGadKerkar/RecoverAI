@@ -128,12 +128,20 @@ func (vc *ValidatorConsumer) processRiskEvent(ctx context.Context, payload []byt
 			"reason", validationResult.SkipReason,
 		)
 		
+		// Publish WebSocket event for validator blocked
+		vc.publishWebSocketEvent(ctx, caseID.String(), event.PaymentID, "validator", "validator_blocked", map[string]interface{}{
+			"reason": validationResult.SkipReason,
+		})
+		
 		// Publish to recovery.blocked topic for analytics
 		vc.publishBlocked(ctx, caseID.String(), event.PaymentID, validationResult.SkipReason)
 		
 		// Case already updated by validator
 		return nil
 	}
+
+	// Publish WebSocket event for validator passed
+	vc.publishWebSocketEvent(ctx, caseID.String(), event.PaymentID, "validator", "validator_passed", map[string]interface{}{})
 
 	// Step 2: Call AI Service for strategy recommendation
 	slog.Info("validator consumer: calling AI service", "case_id", caseID)
@@ -184,6 +192,17 @@ func (vc *ValidatorConsumer) processRiskEvent(ctx context.Context, payload []byt
 		"action", aiResponse.Action,
 		"confidence", getConfidence(aiResponse.StrategyAssessment),
 	)
+
+	// Publish WebSocket events for AI analysis
+	vc.publishWebSocketEvent(ctx, caseID.String(), event.PaymentID, "ai_agent", "ai_analyzed", map[string]interface{}{
+		"failure_type":         event.FailureType,
+		"recovery_probability": getConfidence(aiResponse.StrategyAssessment),
+	})
+	
+	vc.publishWebSocketEvent(ctx, caseID.String(), event.PaymentID, "ai_agent", "ai_strategy_selected", map[string]interface{}{
+		"strategy":   aiResponse.Action,
+		"confidence": getConfidence(aiResponse.StrategyAssessment),
+	})
 
 	// Step 3: Store AI strategy in database
 	aiStrategyJSON, _ := json.Marshal(aiResponse.StrategyAssessment)
@@ -278,4 +297,35 @@ func getConfidence(strategyAssessment map[string]interface{}) float64 {
 		return conf
 	}
 	return 0.0
+}
+
+// publishWebSocketEvent publishes an audit event to the WebSocket events topic
+func (vc *ValidatorConsumer) publishWebSocketEvent(ctx context.Context, caseID, paymentID, actor, action string, metadata map[string]interface{}) {
+	event := map[string]interface{}{
+		"type":       "audit_event",
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"case_id":    caseID,
+		"payment_id": paymentID,
+		"data": map[string]interface{}{
+			"actor":    actor,
+			"action":   action,
+			"metadata": metadata,
+		},
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		slog.Error("validator consumer: failed to marshal websocket event", "error", err)
+		return
+	}
+
+	// Fire and forget - don't block on WebSocket publishing
+	go func() {
+		publishCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		
+		if err := vc.producer.Publish(publishCtx, kafkapkg.TopicWebSocketEvents, caseID, payload); err != nil {
+			slog.Error("validator consumer: failed to publish websocket event", "error", err)
+		}
+	}()
 }
