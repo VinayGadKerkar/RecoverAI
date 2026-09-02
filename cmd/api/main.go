@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"recoverai/internal/handlers"
 	custommiddleware "recoverai/internal/middleware"
 	"recoverai/internal/redis"
+	wsocket "recoverai/internal/websocket"
 )
 
 func main() {
@@ -44,6 +46,46 @@ func main() {
 	}
 	defer redisClient.Close()
 
+	// ─── WebSocket Hub ────────────────────────────────────────────────────────
+	hub := wsocket.NewHub()
+	go hub.Run()
+	
+	// Create broadcaster for metric updates
+	broadcaster := wsocket.NewBroadcaster(hub, dbPool)
+	
+	// Start WebSocket consumer to relay Kafka events to connected clients
+	kafkaBrokersList := strings.Split(cfg.KafkaBrokers, ",")
+	wsConsumer, err := wsocket.NewConsumer(kafkaBrokersList, broadcaster)
+	if err != nil {
+		slog.Error("failed to create websocket consumer", "error", err)
+	} else {
+		go func() {
+			if err := wsConsumer.Run(context.Background()); err != nil {
+				slog.Error("websocket consumer error", "error", err)
+			}
+		}()
+	}
+
+	// Start heartbeat goroutine (every 10 seconds)
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			var activeCount int
+			err := dbPool.QueryRow(context.Background(), `
+				SELECT COUNT(*) FROM recovery_cases 
+				WHERE status IN ('open', 'in_progress')
+			`).Scan(&activeCount)
+			if err == nil {
+				msg := wsocket.NewPipelineHeartbeat(activeCount, 0)
+				data, err := msg.ToJSON()
+				if err == nil {
+					hub.Broadcast(data)
+				}
+			}
+		}
+	}()
+
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -60,6 +102,9 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, `{"status":"ok"}`)
 	})
+
+	// ─── WebSocket endpoint (no auth for hackathon) ───────────────────────────
+	r.Get("/ws", hub.ServeWS)
 
 	// ─── Public auth routes (no JWT required) ─────────────────────────────────
 	handlers.RegisterAuthRoutes(r, dbPool, cfg)

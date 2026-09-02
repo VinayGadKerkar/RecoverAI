@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getRecoveryCase, getAuditLogs } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { useWebSocket, type WSMessage } from "@/hooks/useWebSocket";
 
 export default function CaseDetailPage() {
   const pathname = usePathname();
   const [id, setId] = useState<string | null>(null);
+  const [realtimeAuditLogs, setRealtimeAuditLogs] = useState<any[]>([]);
 
   useEffect(() => {
     // Extract ID from pathname
@@ -21,17 +23,54 @@ export default function CaseDetailPage() {
     }
   }, [pathname]);
 
-  const { data: caseData, isLoading: caseLoading } = useSWR(
+  const { data: caseData, isLoading: caseLoading, mutate: mutateCaseData } = useSWR(
     id ? `/recovery-cases/${id}` : null,
     () => (id ? getRecoveryCase(id) : null),
-    { refreshInterval: 5000 }
+    { refreshInterval: 30000 } // Reduced from 5s to 30s - WebSocket handles real-time updates
   );
 
   const { data: auditLogs, isLoading: logsLoading } = useSWR(
     id ? `/recovery-cases/${id}/audit-logs` : null,
     () => (id ? getAuditLogs(id) : null),
-    { refreshInterval: 5000 }
+    { refreshInterval: 0, revalidateOnFocus: false } // No polling - use WebSocket
   );
+
+  // WebSocket connection for real-time updates
+  const { isConnected } = useWebSocket(
+    `ws://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8080/ws`,
+    {
+      onAuditEvent: useCallback((message: WSMessage) => {
+        // Only process events for this case
+        if (message.case_id === id) {
+          const newLog = {
+            actor: message.data.actor,
+            action: message.data.action,
+            message: formatAuditMessage(message.data.actor, message.data.action, message.data.metadata),
+            metadata: message.data.metadata,
+            created_at: message.timestamp,
+          };
+          
+          setRealtimeAuditLogs(prev => [newLog, ...prev]);
+          
+          // Trigger case data refresh if status might have changed
+          if (message.data.action === 'payment_captured' || 
+              message.data.action === 'validator_blocked' ||
+              message.data.action === 'self_recovered') {
+            mutateCaseData();
+          }
+        }
+      }, [id, mutateCaseData]),
+      
+      onCaseStatusChanged: useCallback((message: WSMessage) => {
+        if (message.case_id === id) {
+          mutateCaseData();
+        }
+      }, [id, mutateCaseData]),
+    }
+  );
+
+  // Combine initial audit logs with real-time updates
+  const allAuditLogs = [...realtimeAuditLogs, ...(auditLogs || [])];
 
   if (!id || caseLoading || logsLoading) {
     return (
@@ -329,9 +368,17 @@ export default function CaseDetailPage() {
                 {/* Timeline vertical line */}
                 <div className="absolute left-[15px] top-0 h-full w-[2px] bg-border"></div>
 
-                {auditLogs && auditLogs.length > 0 ? (
-                  auditLogs.map((log: any, idx: number) => (
-                    <TimelineItem key={log.id} log={log} isLast={idx === auditLogs.length - 1} />
+                {/* WebSocket Connection Status */}
+                {isConnected && (
+                  <div className="mb-4 flex items-center gap-2 text-xs text-green-500">
+                    <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
+                    <span>Real-time updates active</span>
+                  </div>
+                )}
+
+                {allAuditLogs && allAuditLogs.length > 0 ? (
+                  allAuditLogs.map((log: any, idx: number) => (
+                    <TimelineItem key={log.id || `rt-${idx}`} log={log} isLast={idx === allAuditLogs.length - 1} />
                   ))
                 ) : (
                   <p className="text-sm text-muted-foreground">No audit logs available</p>
@@ -400,4 +447,74 @@ function CheckItem({ label, passed }: { label: string; passed: boolean }) {
       )}
     </div>
   );
+}
+
+
+// Format audit message based on actor/action
+function formatAuditMessage(actor: string, action: string, metadata: any = {}): string {
+  switch (actor) {
+    case "risk_engine":
+      if (action === "risk_scored") {
+        const priority = metadata.priority || "unknown";
+        const prob = (metadata.recovery_probability || 0) * 100;
+        return `Risk scored: ${priority} priority, ${prob.toFixed(0)}% recovery probability`;
+      }
+      break;
+    
+    case "validator":
+      switch (action) {
+        case "check_1_passed":
+        case "check1_pass":
+          return "✓ Check 1: Payment not already captured";
+        case "check_2_passed":
+        case "check2_pass":
+          return "✓ Check 2: No active bank outage";
+        case "check_3_passed":
+        case "check3_pass":
+          return "✓ Check 3: RBI compliant";
+        case "check_4_passed":
+        case "check4_pass":
+          const roi = (metadata.roi_paise || 0) / 100;
+          return `✓ Check 4: ROI positive (₹${roi.toFixed(2)})`;
+        case "check_5_passed":
+        case "check5_pass":
+          return "✓ Check 5: Error is retryable";
+        case "check_6_passed":
+        case "check6_pass":
+          const n = metadata.retry_count || 0;
+          const max = metadata.max_retries || 2;
+          return `✓ Check 6: Retries available (${n} of ${max} used)`;
+        case "validator_passed":
+          return "All 6 checks passed — calling AI";
+        case "validator_blocked":
+          return `Blocked: ${metadata.reason || "validation failed"}`;
+      }
+      break;
+    
+    case "ai_agent":
+      switch (action) {
+        case "ai_analyzed":
+          const failureType = metadata.failure_type || "unknown";
+          const prob = (metadata.recovery_probability || 0) * 100;
+          return `AI: ${failureType}, ${prob.toFixed(0)}% recovery probability`;
+        case "ai_strategy_selected":
+          const strategy = metadata.strategy || "unknown";
+          const confidence = (metadata.confidence || 0) * 100;
+          return `Strategy: ${strategy} — ${confidence.toFixed(0)}% confidence`;
+      }
+      break;
+    
+    case "execution_worker":
+      switch (action) {
+        case "action_executed":
+          return `Action: ${metadata.action_type || "action"} executed`;
+        case "payment_captured":
+          const amount = (metadata.amount_paise || 0) / 100;
+          return `✅ ₹${amount.toFixed(2)} recovered`;
+      }
+      break;
+  }
+  
+  // Fallback: return action as-is
+  return action.replace(/_/g, " ");
 }

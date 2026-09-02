@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,33 +19,51 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { format } from "date-fns";
+import { useWebSocket, type WSMessage } from "@/hooks/useWebSocket";
 
 export default function DashboardPage() {
-  // Poll overview every 5 seconds for live updates
-  const { data: overview } = useSWR("/analytics/overview", getOverview, {
-    refreshInterval: 5000,
+  // Reduced polling - WebSocket handles real-time updates
+  const { data: overview, mutate: mutateOverview } = useSWR("/analytics/overview", getOverview, {
+    refreshInterval: 30000, // Reduced from 5s to 30s
   });
 
   const { data: recoveryRateData } = useSWR(
     "/analytics/recovery-rate",
     () => getRecoveryRate("7d", "failure_type"),
-    { refreshInterval: 30000 }
+    { refreshInterval: 60000 } // Reduced from 30s to 60s
   );
 
   const { data: revenueData } = useSWR(
     "/analytics/revenue",
     () => getRevenue("24h", "hour"),
-    { refreshInterval: 30000 }
+    { refreshInterval: 60000 } // Reduced from 30s to 60s
   );
 
-  const { data: recentCases } = useSWR(
+  const { data: recentCases, mutate: mutateRecentCases } = useSWR(
     "/recent-cases",
     () => getRecentCases(10),
-    { refreshInterval: 5000 }
+    { refreshInterval: 30000 } // Reduced from 5s to 30s
   );
 
   const [prevRecovered, setPrevRecovered] = useState<number>(0);
   const [animateRecovered, setAnimateRecovered] = useState(false);
+
+  // WebSocket for real-time metric updates
+  const { isConnected } = useWebSocket(
+    `ws://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8080/ws`,
+    {
+      onMetricUpdate: useCallback(() => {
+        // Refresh metrics when WebSocket notifies us
+        mutateOverview();
+        mutateRecentCases();
+      }, [mutateOverview, mutateRecentCases]),
+      
+      onAuditEvent: useCallback((message: WSMessage) => {
+        // Refresh cases when any audit event occurs
+        mutateRecentCases();
+      }, [mutateRecentCases]),
+    }
+  );
 
   // Animate recovered revenue on change
   useEffect(() => {

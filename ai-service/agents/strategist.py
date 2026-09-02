@@ -12,6 +12,12 @@ from schemas.output import RecoveryStrategy, RiskAssessment
 
 SYSTEM_PROMPT = """You are a payment recovery strategist for an Indian fintech system. You will receive a risk assessment and merchant policy. Respond ONLY with a valid JSON object matching the schema exactly. Never add text outside the JSON.
 
+CRITICAL JSON RULES:
+- Use numeric values like 0.9, NOT "0.9" or "0. nine" or any text
+- confidence MUST be a number between 0.0 and 1.0 (e.g., 0.92)
+- delay_minutes MUST be an integer (e.g., 30)
+- reasoning MUST be under 280 characters - use abbreviations if needed
+
 Decision rules you must follow:
 - If failure_type is 'risk_blocked' (YG): strategy must be escalate_to_merchant
 - If failure_type is 'non_retryable_auto' (Z9, Z8): strategy must be generate_payment_link or notify_customer, never retry_payment
@@ -25,15 +31,17 @@ Decision rules you must follow:
 Output JSON schema:
 {{
   "strategy": "retry_payment|generate_payment_link|notify_customer|schedule_retry|escalate_to_merchant|stop_recovery",
-  "confidence": <float 0.0-1.0>,
-  "delay_minutes": <int>,
+  "confidence": <number 0.0-1.0, NOT text>,
+  "delay_minutes": <integer>,
   "recovery_window_reason": "<max 100 chars>",
   "message_template": "<string or null>",
-  "reasoning": "<detailed 3-4 sentence explanation covering why this action, key factors, expected outcome, and risks>",
+  "reasoning": "<CRITICAL: max 280 characters - be concise, cover: action + why + expected outcome>",
   "key_factors": ["<factor 1>", "<factor 2>", "<factor 3>"]
 }}
 
-Example reasoning: "Recommended retry_payment because U30 error indicates temporary debit timeout with 73% historical recovery rate. Payment is recent (2 min old), first attempt, amount (₹999) below risk threshold. Bank APIs show normal status with no outages detected. Expected 65-75% success within 15 minutes."
+CRITICAL: reasoning MUST be under 280 characters. Use abbreviations: amt=amount, prob=probability, rec=recovery.
+
+Example reasoning (247 chars): "Retry recommended: U30 error has 85% rec prob, payment recent (2min), first attempt, amt ₹999 below risk threshold. Bank APIs normal. Expected 65-75% success in 15min after 30min cooldown per merchant policy. Risk minimal as transient error."
 
 VALIDATION: Before returning, check that strategy is in the allowed list. If not, default to generate_payment_link."""
 
@@ -97,6 +105,14 @@ async def run_strategist(llm, request, risk_assessment: RiskAssessment) -> Recov
             # DEBUG: Log raw LLM output
             print(f"🔍 DEBUG Strategist [Attempt {attempt + 1}]: Risk probability={risk_assessment.recovery_probability}, Amount=₹{request.amount_paise/100}")
             print(f"🔍 DEBUG Raw LLM Output: {json.dumps(result, indent=2)}")
+            
+            # Truncate reasoning if too long (emergency fallback)
+            # Be aggressive due to unicode characters counting differently
+            if 'reasoning' in result:
+                reasoning_len = len(result['reasoning'])
+                if reasoning_len > 270:
+                    result['reasoning'] = result['reasoning'][:267] + "..."
+                    print(f"⚠️ DEBUG Truncated reasoning from {reasoning_len} to {len(result['reasoning'])} chars")
             
             # Validate strategy is in allowed actions
             strategy_obj = RecoveryStrategy(**result)
