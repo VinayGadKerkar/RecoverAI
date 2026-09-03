@@ -19,6 +19,7 @@ import (
 	"recoverai/internal/handlers"
 	custommiddleware "recoverai/internal/middleware"
 	"recoverai/internal/redis"
+	"recoverai/internal/services"
 	wsocket "recoverai/internal/websocket"
 )
 
@@ -45,6 +46,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer redisClient.Close()
+
+	// ─── AI Client ────────────────────────────────────────────────────────────
+	aiClient := services.NewAIClient()
 
 	// ─── WebSocket Hub ────────────────────────────────────────────────────────
 	hub := wsocket.NewHub()
@@ -120,13 +124,17 @@ func main() {
 	// Only use in TEST MODE. In production, move inside JWT auth.
 	handlers.RegisterPaymentRoutes(r, dbPool, cfg)
 
-	// ─── Authenticated API routes (JWT required) ──────────────────────────────
-	r.Group(func(r chi.Router) {
-		r.Use(custommiddleware.JWTAuth(cfg.JWTSecret))
-		r.Route("/api/v1", func(r chi.Router) {
+	// ─── API v1 routes ─────────────────────────────────────────────────────────
+	r.Route("/api/v1", func(r chi.Router) {
+		// Demo routes (public, but protected by DEMO_MODE check)
+		handlers.RegisterDemoRoutes(r, dbPool, cfg)
+		
+		// Protected routes (JWT required)
+		r.Group(func(r chi.Router) {
+			r.Use(custommiddleware.JWTAuth(cfg.JWTSecret))
 			handlers.RegisterRecoveryRoutes(r, dbPool, redisClient, cfg)
 			handlers.RegisterMerchantRoutes(r, dbPool, cfg)
-			handlers.RegisterAnalyticsRoutes(r, dbPool, cfg)
+			handlers.RegisterAnalyticsRoutes(r, dbPool, cfg, aiClient)
 		})
 	})
 

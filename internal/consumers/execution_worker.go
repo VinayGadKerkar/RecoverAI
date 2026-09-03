@@ -191,6 +191,16 @@ func (ew *ExecutionWorker) processCommand(ctx context.Context, payload []byte) e
 	if cmd.Action == "RETRY_PAYMENT" {
 		cooldownKey := fmt.Sprintf("recovery:cooldown:%s", cmd.CaseID)
 		cooldownDuration := time.Duration(policyInput.MerchantPolicy.RetryCooldownMinutes) * time.Minute
+		
+		// DEMO_MODE: Cap cooldown at 1 minute for smooth presentations
+		if ew.cfg.DemoMode && cooldownDuration > time.Minute {
+			slog.Info("DEMO_MODE: cooldown reduced to 1 minute",
+				"case_id", cmd.CaseID,
+				"original_cooldown_minutes", policyInput.MerchantPolicy.RetryCooldownMinutes,
+			)
+			cooldownDuration = time.Minute
+		}
+		
 		ew.redis.Set(ctx, cooldownKey, "1", cooldownDuration)
 
 		ew.db.Exec(ctx, `UPDATE recovery_cases SET retry_count = retry_count + 1 WHERE id = $1`, cmd.CaseID)

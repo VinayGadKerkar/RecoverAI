@@ -236,6 +236,15 @@ func (vc *ValidatorConsumer) processRiskEvent(ctx context.Context, payload []byt
 		StrategySummary:        aiResponse.StrategyAssessment,
 	}
 
+	// DEMO_MODE: Cap delays at 1 minute for smooth presentations
+	if vc.cfg.DemoMode && command.ScheduledAtMinutes > 1 {
+		slog.Info("DEMO_MODE: delay reduced to 1 minute",
+			"case_id", caseID.String(),
+			"original_delay", command.ScheduledAtMinutes,
+		)
+		command.ScheduledAtMinutes = 1
+	}
+
 	return vc.publishCommand(ctx, &command)
 }
 

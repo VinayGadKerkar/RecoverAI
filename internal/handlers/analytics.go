@@ -10,15 +10,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"recoverai/internal/config"
+	"recoverai/internal/services"
 )
 
-func RegisterAnalyticsRoutes(r chi.Router, db *pgxpool.Pool, cfg *config.Config) {
+func RegisterAnalyticsRoutes(r chi.Router, db *pgxpool.Pool, cfg *config.Config, aiClient *services.AIClient) {
 	h := &analyticsHandler{db: db, cfg: cfg}
 	r.Get("/analytics/overview", h.Overview)
 	r.Get("/analytics/recovery-rate", h.RecoveryRate)
 	r.Get("/analytics/revenue", h.Revenue)
 	r.Get("/analytics/honest-exceptions", h.HonestExceptions)
 	r.Get("/analytics/ai-performance", h.AIPerformance)
+	
+	// Status endpoint
+	statusHandler := NewStatusHandler(aiClient, cfg)
+	r.Get("/status", statusHandler.Handle)
 }
 
 type analyticsHandler struct {

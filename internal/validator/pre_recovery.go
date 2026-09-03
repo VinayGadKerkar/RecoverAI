@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"recoverai/internal/config"
+	"recoverai/internal/economics"
 	redisclient "recoverai/internal/redis"
 )
 
@@ -233,42 +234,52 @@ func (v *Validator) check3RBIMandate(ctx context.Context, c *RecoveryCaseInput) 
 // ─── CHECK 4: Recovery ROI ────────────────────────────────────────────────────
 
 func (v *Validator) check4ROI(ctx context.Context, c *RecoveryCaseInput) (skip bool, reason string) {
-	// Estimated cost by action type (in paise)
-	const (
-		costRetry           = 0     // free
-		costPaymentLink     = 0     // free
-		costSendNotification = 50    // SMS cost
-		costHumanEscalation = 10000 // agent time
-	)
-
-	// Simple heuristic: assume action will be retry or payment_link (zero cost)
-	estimatedCost := int64(0)
-	if c.RecoveryProbability < 0.3 {
-		// Low probability likely triggers escalation
-		estimatedCost = costHumanEscalation
-	}
-
-	recoveryROI := float64(c.Amount)*c.RecoveryProbability - float64(estimatedCost)
-
-	// Load merchant's MinRecoveryROI policy (default 0)
-	var minROI float64
+	// Load merchant's MinRecoveryROI policy (in paise, matching schema comment)
+	var minROIPaise int64
 	err := v.db.QueryRow(ctx, `
 		SELECT COALESCE(min_recovery_roi, 0)
 		FROM recovery_policies
 		WHERE merchant_id = $1
-	`, c.MerchantID).Scan(&minROI)
+	`, c.MerchantID).Scan(&minROIPaise)
 	if err != nil {
 		slog.Warn("validator: failed to load min_recovery_roi policy, using default 0", "error", err)
-		minROI = 0
+		minROIPaise = 0
 	}
 
-	if recoveryROI < minROI {
-		return true, fmt.Sprintf("Recovery ROI ₹%.2f below threshold ₹%.2f — not cost effective",
-			recoveryROI/100, minROI/100)
+	// Use economics package for accurate incremental EV calculation.
+	// This accounts for:
+	// 1. Self-recovery baseline (Δp = P(intervene) - P(self-recover))
+	// 2. Action-specific costs (retry vs payment_link vs escalate)
+	// 3. Attempt decay (retry 2 is worth less than retry 1)
+	econ := economics.Evaluate(economics.Input{
+		AmountPaise:     c.Amount,
+		Action:          economics.CheapestViableAction(c.UPIErrorCode),
+		Attempt:         c.RetryCount,
+		UPIErrorCode:    c.UPIErrorCode,
+		BaseProbability: c.RecoveryProbability,
+	})
+
+	// CRITICAL: Check incremental EV, not raw probability.
+	// For Z9 (insufficient funds): self-recovery baseline is 40%, so if our
+	// intervention probability is 31.5%, we get Δp = -8.5% → NEGATIVE value!
+	if econ.NetEVPaise < minROIPaise {
+		return true, econ.Explain(minROIPaise) + " — not cost effective"
 	}
 
-	// Update recovery_roi in DB
-	v.db.Exec(ctx, `UPDATE recovery_cases SET recovery_roi = $1 WHERE id = $2`, recoveryROI/100, c.ID)
+	// Update recovery_roi in DB with the computed NetEV (clamped to avoid overflow)
+	roiToStore := float64(econ.NetEVPaise) / 100.0
+	if econ.NetEVPaise > economics.MaxStorablePaise {
+		roiToStore = float64(economics.MaxStorablePaise) / 100.0
+	}
+	v.db.Exec(ctx, `UPDATE recovery_cases SET recovery_roi = $1 WHERE id = $2`, roiToStore, c.ID)
+
+	slog.Info("validator: CHECK 4 passed",
+		"case_id", c.ID,
+		"net_ev_paise", econ.NetEVPaise,
+		"delta_p", econ.DeltaP,
+		"self_recovery_baseline", econ.SelfRecoveryBaseline,
+		"probability", econ.Probability,
+	)
 
 	return false, ""
 }
@@ -277,16 +288,11 @@ func (v *Validator) check4ROI(ctx context.Context, c *RecoveryCaseInput) (skip b
 
 // check5NonRetryable flags error codes that should NEVER be retried, only payment_link or escalate.
 // Returns true if force_payment_link should be set.
+//
+// This check is now defined by internal/economics so the validator and policy
+// engine can never drift apart on which codes are retryable.
 func (v *Validator) check5NonRetryable(c *RecoveryCaseInput) bool {
-	// YG = risk threshold exceeded (NPCI block)
-	// Z8 = per-transaction limit exceeded
-	// Both need alternate payment method, NOT a direct retry
-	switch c.UPIErrorCode {
-	case "YG", "Z8":
-		return true
-	default:
-		return false
-	}
+	return economics.ForcePaymentLink(c.UPIErrorCode)
 }
 
 // ─── CHECK 6: Max retries hit ─────────────────────────────────────────────────

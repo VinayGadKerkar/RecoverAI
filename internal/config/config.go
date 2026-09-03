@@ -44,6 +44,9 @@ type Config struct {
 
 	// Outage detection
 	OutageDetectionThreshold int // failures per 5-minute window to trigger outage flag
+
+	// Demo Mode - reduces delays to 1 minute for presentations
+	DemoMode bool
 }
 
 func Load() (*Config, error) {
@@ -67,6 +70,7 @@ func Load() (*Config, error) {
 		RetryWindowMinutes: getEnvInt("RETRY_WINDOW_MINUTES", 30),
 		HighValueThreshold: int64(getEnvInt("HIGH_VALUE_THRESHOLD_PAISE", 5000000)), // ₹50,000
 		OutageDetectionThreshold: getEnvInt("OUTAGE_DETECTION_THRESHOLD", 10),
+		DemoMode:           getEnvBool("DEMO_MODE", false),
 	}
 	return cfg, nil
 }
@@ -96,4 +100,16 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return b
 }
