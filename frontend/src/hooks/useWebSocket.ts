@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { toast } from 'sonner';
 
 export interface WSMessage {
   type: 'audit_event' | 'case_status_changed' | 'metric_update' | 
@@ -69,10 +70,98 @@ export function useWebSocket(caseID?: string) {
         
         switch (msg.type) {
           case 'audit_event':
-          case 'case_status_changed':
-          case 'outage_detected':
             // Keep last 100 events to prevent memory issues
             setEvents(prev => [...prev.slice(-99), msg]);
+            
+            // Show toast notifications for status-changing audit events
+            if (msg.data.action) {
+              const { action, new_status, amount_paise, upi_error_code } = msg.data as {
+                action?: string;
+                new_status?: string;
+                amount_paise?: number;
+                upi_error_code?: string;
+              };
+              const amount = amount_paise ? `₹${(amount_paise / 100).toLocaleString('en-IN')}` : '';
+              
+              // Map actions to toast notifications
+              if (action === 'payment_captured' || new_status === 'recovered') {
+                toast.success(`${amount} recovered`, {
+                  description: 'Payment recovery completed',
+                  duration: 5000,
+                });
+              } else if (action === 'self_recovered' || new_status === 'customer_self_recovered') {
+                toast.info('Customer self-recovered', {
+                  description: 'No system action needed',
+                  duration: 4000,
+                });
+              } else if (action === 'stopped' || new_status === 'not_worth_recovering') {
+                toast('Recovery stopped', {
+                  description: 'Negative ROI — not cost effective',
+                  duration: 4000,
+                });
+              } else if (action === 'human_approval_required' || new_status === 'pending_human_approval') {
+                toast.warning(`${amount} needs approval`, {
+                  description: 'High-value case requires manual review',
+                  duration: 6000,
+                });
+              } else if (action === 'bank_outage_detected') {
+                toast.warning(`Bank outage detected: ${upi_error_code || 'Unknown'}`, {
+                  description: 'Cases batched until bank recovers',
+                  duration: 8000,
+                });
+              }
+            }
+            break;
+            
+          case 'case_status_changed':
+            // Legacy support for explicit status change events
+            setEvents(prev => [...prev.slice(-99), msg]);
+            
+            const { new_status, amount_paise } = msg.data as {
+              new_status?: string;
+              amount_paise?: number;
+            };
+            const amount = amount_paise ? `₹${(amount_paise / 100).toLocaleString('en-IN')}` : '';
+            
+            switch (new_status) {
+              case 'recovered':
+                toast.success(`${amount} recovered`, {
+                  description: 'Payment recovery completed',
+                  duration: 5000,
+                });
+                break;
+              case 'customer_self_recovered':
+                toast.info('Customer self-recovered', {
+                  description: 'No system action needed',
+                  duration: 4000,
+                });
+                break;
+              case 'not_worth_recovering':
+                toast('Recovery stopped', {
+                  description: 'Negative ROI — not cost effective',
+                  duration: 4000,
+                });
+                break;
+              case 'pending_human_approval':
+                toast.warning(`${amount} needs approval`, {
+                  description: 'High-value case requires manual review',
+                  duration: 6000,
+                });
+                break;
+            }
+            break;
+            
+          case 'outage_detected':
+            setEvents(prev => [...prev.slice(-99), msg]);
+            
+            const { upi_error_code, failure_count } = msg.data as {
+              upi_error_code?: string;
+              failure_count?: number;
+            };
+            toast.warning(`Bank outage detected: ${upi_error_code}`, {
+              description: `${failure_count} failures in 5 minutes — cases batched`,
+              duration: 8000,
+            });
             break;
             
           case 'metric_update':

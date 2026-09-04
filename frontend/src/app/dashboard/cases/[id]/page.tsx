@@ -11,6 +11,29 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import AuditTimeline from "@/components/AuditTimeline";
 import { CheckCircle, XCircle, AlertCircle, Activity, DollarSign, TrendingUp, Clock, ShieldCheck } from "lucide-react";
 
+// Countdown Timer Component
+function Countdown({ until }: { until: string }) {
+  const [seconds, setSeconds] = useState(
+    Math.max(0, Math.floor((new Date(until).getTime() - Date.now()) / 1000))
+  );
+  
+  useEffect(() => {
+    if (seconds <= 0) return;
+    const t = setInterval(() => setSeconds(s => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [seconds]);
+  
+  if (seconds <= 0) return <span className="text-green-400">Executing now...</span>;
+  
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return (
+    <span className="text-amber-400 font-mono">
+      Retry in {m}:{s.toString().padStart(2, '0')}
+    </span>
+  );
+}
+
 export default function CaseDetailPage() {
   const pathname = usePathname();
   const [id, setId] = useState<string | null>(null);
@@ -197,6 +220,11 @@ export default function CaseDetailPage() {
                 <div>
                   <p className="text-xs text-muted-foreground mb-1.5">Status</p>
                   <StatusBadge status={caseData.status} />
+                  {caseData.cooldown_until && new Date(caseData.cooldown_until) > new Date() && (
+                    <div className="mt-2 text-sm">
+                      <Countdown until={caseData.cooldown_until} />
+                    </div>
+                  )}
                 </div>
                 
                 <div className="pt-3 border-t border-border">

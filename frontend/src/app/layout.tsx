@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Toaster } from 'sonner';
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -43,6 +44,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Main content */}
           <main className="flex-1 overflow-auto">{children}</main>
         </div>
+
+        {/* Toast notifications */}
+        <Toaster position="bottom-right" theme="dark" richColors />
       </body>
     </html>
   );

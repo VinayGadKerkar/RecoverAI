@@ -28,11 +28,15 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Copy the standalone server bundle produced by Next.js
-COPY --from=builder /app/.next/standalone ./
-# Static assets (/_next/static)
-COPY --from=builder /app/.next/static ./.next/static
+# Copy package files first (for dependencies)
+COPY --from=builder /app/package*.json ./
+
+# Copy node_modules (includes sonner and all dependencies)
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy the built application
+COPY --from=builder /app/.next ./.next
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["npm", "run", "start"]
