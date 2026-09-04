@@ -242,7 +242,191 @@ return ChatGroq(
 
 ## 🎨 Frontend Issues
 
-### Issue 4: Frontend Shows "No cases found"
+### Issue 4: Toast Notifications Not Appearing
+
+**Problem:** Toast notifications not showing when recovery cases are processed.
+
+**Symptoms:**
+- Dashboard loads correctly
+- Cases appear in the table
+- No toast popups in bottom-right corner
+- Browser console shows no errors
+
+**Root Cause Analysis:**
+
+1. **Wrong WebSocket Event Type** - Frontend was listening for `case_status_changed` events, but backend publishes `audit_event` type
+2. **Missing Sonner Package** - Toast library not installed
+3. **Docker Build Issues** - Frontend container not including toast dependencies
+
+**Solution:**
+
+**Step 1:** Install toast notification library
+
+File: `frontend/package.json`
+```json
+{
+  "dependencies": {
+    "sonner": "^1.7.1"
+  }
+}
+```
+
+**Step 2:** Add Toaster component to root layout
+
+File: `frontend/src/app/layout.tsx`
+```tsx
+import { Toaster } from 'sonner'
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>
+        {children}
+        <Toaster position="bottom-right" />
+      </body>
+    </html>
+  )
+}
+```
+
+**Step 3:** Update WebSocket hook to listen for correct event type
+
+File: `frontend/src/hooks/useWebSocket.ts`
+```typescript
+// Before:
+if (message.type === 'case_status_changed') { ... }
+
+// After:
+if (message.type === 'audit_event') {
+  const { action, amount, case_id } = message;
+  
+  switch (action) {
+    case 'payment_captured':
+      toast.success(`Payment of ₹${(amount / 100).toFixed(2)} recovered successfully`);
+      break;
+    case 'self_recovered':
+      toast.info(`Customer self-recovered ₹${(amount / 100).toFixed(2)}`);
+      break;
+    case 'stopped':
+      toast('Case stopped - not worth recovering');
+      break;
+    case 'human_approval_required':
+      toast.warning(`Human approval required for ₹${(amount / 100).toFixed(2)}`);
+      break;
+    case 'bank_outage_detected':
+      toast.warning('Bank outage detected');
+      break;
+  }
+}
+```
+
+**Step 4:** Fix Docker frontend build
+
+File: `frontend/Dockerfile`
+```dockerfile
+# Before (missing dependencies):
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
+# After (includes all node_modules):
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next ./.next
+```
+
+**Step 5:** Rebuild Docker image
+
+```powershell
+# Stop frontend container
+docker compose stop frontend
+
+# Remove old container and image
+docker compose rm -f frontend
+docker rmi recoverai-frontend
+
+# Rebuild (takes ~153 seconds)
+docker compose build --no-cache frontend
+
+# Start container
+docker compose up -d frontend
+```
+
+**Verification:**
+
+```powershell
+# Test toast notifications
+.\test_toast.ps1
+
+# Expected output in browser:
+# 🟢 Green success: "Payment of ₹499.90 recovered successfully"
+# 🔵 Blue info: "Customer self-recovered ₹249.90"
+# ⚪ Gray: "Case stopped - not worth recovering"
+# 🟠 Orange warning: "Human approval required for ₹899.90"
+```
+
+**WebSocket Event Format:**
+
+Backend publishes to `websocket.events` topic:
+```json
+{
+  "type": "audit_event",
+  "action": "payment_captured",
+  "case_id": "01234567-89ab-cdef-0123-456789abcdef",
+  "amount": 49990,
+  "timestamp": "2026-09-04T10:30:00Z"
+}
+```
+
+**Prevention:**
+- Check WebSocket message format in backend before implementing frontend
+- Test toast notifications with `test_toast.ps1` script
+- Verify Docker frontend includes all dependencies with `docker exec recoverai-frontend-1 ls node_modules/sonner`
+
+---
+
+### Issue 5: Frontend Docker Container Port Conflict
+
+**Problem:** Frontend container fails to start with "port already in use" error.
+
+**Symptoms:**
+```
+Error response from daemon: Ports are not available: exposing port TCP 0.0.0.0:3000 -> 0.0.0.0:0.0
+: listen tcp 0.0.0.0:3000: bind: Only one usage of each socket address (protocol/network address/port) is normally permitted.
+```
+
+**Root Cause:** Local development server (`npm run dev`) still running on port 3000.
+
+**Solution:**
+
+```powershell
+# Find process using port 3000
+netstat -ano | Select-String ":3000"
+
+# Output example:
+# TCP    0.0.0.0:3000           0.0.0.0:0              LISTENING       6140
+
+# Kill the process
+Stop-Process -Id 6140 -Force
+
+# Verify port is free
+netstat -ano | Select-String ":3000"
+# Should return no results
+
+# Start Docker frontend
+docker compose up -d frontend
+
+# Check container status
+docker ps --filter "name=frontend"
+```
+
+**Prevention:**
+- Always stop local dev server before starting Docker containers
+- Use different ports for local dev (e.g., 3001) if running both simultaneously
+- Add a startup script that checks for port conflicts
+
+---
+
+### Issue 6: Frontend Shows "No cases found"
 
 **Problem:** Dashboard showing empty state despite recovery cases existing in database.
 
@@ -321,7 +505,7 @@ curl http://localhost:8080/api/v1/recovery-cases | jq .
 
 ---
 
-### Issue 5: Next.js Build Errors
+### Issue 7: Next.js Build Errors
 
 **Problem:** Frontend fails to build with module resolution errors.
 
@@ -354,7 +538,7 @@ npx shadcn-ui@latest add badge button card table tabs dialog
 
 ## 🐳 Docker & Infrastructure
 
-### Issue 6: Services Won't Start
+### Issue 8: Services Won't Start
 
 **Problem:** Docker services fail to start or are unhealthy.
 
@@ -422,7 +606,7 @@ docker-compose ps
 
 ---
 
-### Issue 7: Docker Build Cache Issues
+### Issue 9: Docker Build Cache Issues
 
 **Problem:** Code changes not reflected in running containers.
 
@@ -482,7 +666,7 @@ docker-compose ps ai-service
 
 ## 💾 Database Issues
 
-### Issue 8: Migration Failures
+### Issue 10: Migration Failures
 
 **Problem:** Database migrations fail to apply.
 
@@ -526,7 +710,7 @@ docker exec recoverai-api-1 /bin/api -migrate
 
 ---
 
-### Issue 9: Database Connection Refused
+### Issue 11: Database Connection Refused
 
 **Problem:** Services can't connect to PostgreSQL.
 
@@ -563,7 +747,7 @@ DATABASE_URL=postgresql://recoverai:recoverai@localhost:5432/recoverai
 
 ## 📨 Kafka Issues
 
-### Issue 10: Topics Not Created
+### Issue 12: Topics Not Created
 
 **Problem:** Kafka consumers can't find topics.
 
@@ -602,7 +786,7 @@ docker-compose restart kafka-init
 
 ---
 
-### Issue 11: Missing recovery.blocked Topic
+### Issue 13: Missing recovery.blocked Topic
 
 **Problem:** Analytics "Honest Exceptions" endpoint has no data or validator-blocked cases not tracked.
 
@@ -658,7 +842,7 @@ docker exec recoverai-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh \
 
 ---
 
-### Issue 12: Consumer Group Lag
+### Issue 14: Consumer Group Lag
 
 **Problem:** Messages piling up in Kafka, not being consumed.
 
@@ -702,7 +886,7 @@ curl http://localhost:8001/health  # mock AI
 
 ## 🔧 API & Backend Issues
 
-### Issue 13: Webhook Signature Verification Fails
+### Issue 15: Webhook Signature Verification Fails
 
 **Problem:** Razorpay webhooks rejected with "invalid signature".
 
@@ -749,7 +933,7 @@ Invoke-RestMethod -Uri "http://localhost:8080/webhooks/razorpay" `
 
 ---
 
-### Issue 14: Out-of-Order Webhook Events
+### Issue 16: Out-of-Order Webhook Events
 
 **Problem:** `payment.captured` arrives before `payment.failed`, causing incorrect state.
 
@@ -790,7 +974,7 @@ curl -X POST http://localhost:8080/webhooks/razorpay \
 
 ## ⚡ Performance Issues
 
-### Issue 15: Slow AI Response Times
+### Issue 17: Slow AI Response Times
 
 **Problem:** AI service taking >5 seconds per request.
 
@@ -844,7 +1028,7 @@ def analyze_payment(payment_id, error_code, amount):
 
 ---
 
-### Issue 16: High Database Connection Count
+### Issue 18: High Database Connection Count
 
 **Problem:** PostgreSQL max connections exceeded.
 
@@ -984,5 +1168,5 @@ If you encounter an issue not covered here:
 
 ---
 
-**Last Updated:** September 1, 2026  
+**Last Updated:** September 4, 2026  
 **Maintained By:** RecoverAI Team

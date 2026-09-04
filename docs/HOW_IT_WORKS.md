@@ -89,7 +89,11 @@ RecoverAI is a **5-stage autonomous payment recovery pipeline**:
   - `/dashboard/cases` - Recovery cases table
   - `/dashboard/cases/[id]` - Case detail with full audit timeline
   - `/dashboard/analytics` - AI performance metrics
-- **Tech:** Next.js 14, TypeScript, Tailwind CSS, SWR
+- **Real-time Features:**
+  - WebSocket connection for live updates
+  - Toast notifications for recovery events
+  - Auto-refresh with SWR polling (30s intervals)
+- **Tech:** Next.js 14, TypeScript, Tailwind CSS, SWR, Sonner (toast notifications)
 
 #### 5. **Database Schema**
 
@@ -106,6 +110,27 @@ webhook_events          -- Idempotency log + raw webhook payloads
 audit_logs              -- Immutable audit trail (8 actor types)
 bank_outage_events      -- Outage detection history
 ```
+
+**WebSocket Real-Time Updates:**
+
+The backend publishes events to the `websocket.events` Kafka topic, which are consumed by the frontend via WebSocket:
+
+```json
+{
+  "type": "audit_event",
+  "action": "payment_captured",
+  "case_id": "uuid",
+  "amount": 49990,
+  "timestamp": "2026-09-04T10:30:00Z"
+}
+```
+
+These events trigger toast notifications in the bottom-right corner:
+- 🟢 **payment_captured** → Green success toast
+- 🔵 **self_recovered** → Blue info toast
+- ⚪ **stopped** → Gray toast
+- 🟠 **human_approval_required** → Orange warning toast
+- 🟠 **bank_outage_detected** → Orange warning toast
 
 ---
 
@@ -576,7 +601,114 @@ curl -X POST http://localhost:8080/webhooks/razorpay \
 # 5. "result_consumer: action executed"
 ```
 
-### 2. **Outage Detection Test**
+### 2. **End-to-End Workflow Test**
+
+```bash
+# Terminal 1: Start services
+make dev
+
+# Terminal 2: Watch logs
+make dev-logs
+
+# Terminal 3: Fire webhook
+curl -X POST http://localhost:8080/webhooks/razorpay \
+  -H "Content-Type: application/json" \
+  -H "X-Razorpay-Event-Id: evt_e2e_test" \
+  -d '{
+    "entity": "event",
+    "event": "payment.failed",
+    "payload": {
+      "payment": {
+        "entity": {
+          "id": "pay_e2e_test",
+          "amount": 499900,
+          "status": "failed",
+          "method": "upi",
+          "error_code": "U30",
+          "bank": "HDFC",
+          "vpa": "test@upi",
+          "email": "test@example.com",
+          "created_at": '$(date +%s)'
+        }
+      }
+    }
+  }'
+
+# Expected: Within 2 seconds, you should see in Terminal 2:
+# 1. "webhook: event processed"
+# 2. "risk_consumer: processed payment"
+# 3. "validator_consumer: checks passed"
+# 4. "execution_consumer: AI called"
+# 5. "result_consumer: action executed"
+
+# Browser: Open http://localhost:3000/dashboard
+# You should see a toast notification appear in bottom-right corner
+```
+
+---
+
+### 3. **Toast Notification Test**
+
+```powershell
+# Windows PowerShell script to test toast notifications
+# File: test_toast.ps1
+
+# Open browser to http://localhost:3000/dashboard first
+Write-Host "🧪 Testing Toast Notifications"
+Write-Host "================================"
+Write-Host "⚠️  IMPORTANT: Open http://localhost:3000/dashboard in your browser FIRST!"
+Write-Host ""
+Read-Host "Press Enter when browser is open and ready"
+
+# Fire a U30 failure (should trigger success toast after recovery)
+$response = Invoke-RestMethod -Uri "http://localhost:8080/webhooks/razorpay" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body (@{
+    entity = "event"
+    event = "payment.failed"
+    payload = @{
+      payment = @{
+        entity = @{
+          id = "pay_test_toast_$([DateTimeOffset]::Now.ToUnixTimeSeconds())"
+          amount = 499900
+          status = "failed"
+          method = "upi"
+          error_code = "U30"
+          bank = "HDFC"
+          vpa = "test@upi"
+          email = "test@example.com"
+          created_at = [DateTimeOffset]::Now.ToUnixTimeSeconds()
+        }
+      }
+    }
+  } | ConvertTo-Json -Depth 10)
+
+Write-Host "✅ Webhook sent successfully!"
+Write-Host "⏳ Waiting 10 seconds for processing..."
+Start-Sleep -Seconds 10
+Write-Host ""
+Write-Host "✨ CHECK YOUR BROWSER NOW!"
+Write-Host "You should see a toast notification in the bottom-right corner:"
+Write-Host "  • Green success toast if recovery succeeded"
+Write-Host "  • Blue info toast if customer self-recovered"
+Write-Host "  • Orange warning toast if needs approval"
+```
+
+Run it:
+```powershell
+.\test_toast.ps1
+```
+
+Expected toasts:
+- 🟢 **Green success:** "Payment of ₹4,999.00 recovered successfully"
+- 🔵 **Blue info:** "Customer self-recovered ₹2,499.00"
+- ⚪ **Gray:** "Case stopped - not worth recovering"
+- 🟠 **Orange warning:** "Human approval required for ₹8,999.00"
+
+---
+
+### 4. **Outage Detection Test**
 
 ```bash
 # Fire 15 U28 failures rapidly
@@ -615,7 +747,7 @@ docker-compose exec redis redis-cli TTL bank_outage:U28
 # Expected: ~3500 seconds (1 hour)
 ```
 
-### 3. **Customer Self-Recovery Test**
+### 5. **Customer Self-Recovery Test**
 
 ```bash
 # Step 1: Fire payment.failed
@@ -668,7 +800,7 @@ curl -X POST http://localhost:8080/webhooks/razorpay \
 # Check dashboard: case should show status "customer_self_recovered"
 ```
 
-### 4. **Policy Engine Test**
+### 6. **Policy Engine Test**
 
 ```bash
 # Fire a Z9 failure with tiny amount (₹99) from new customer
