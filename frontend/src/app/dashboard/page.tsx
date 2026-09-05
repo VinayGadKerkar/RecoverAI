@@ -56,28 +56,30 @@ export default function DashboardPage() {
 
   // Update local overview immediately when WebSocket sends metrics
   useEffect(() => {
-    if (metrics && (localOverview || overview)) {
-      const base = localOverview || overview!;
-      setLocalOverview({
-        ...base,
-        ...(metrics.revenue_at_risk !== undefined && { revenue_at_risk_paise: metrics.revenue_at_risk }),
-        ...(metrics.revenue_recovered !== undefined && { recovered_revenue_paise: metrics.revenue_recovered }),
-        ...(metrics.recovery_rate !== undefined && { recovery_rate_percent: metrics.recovery_rate }),
-        ...(metrics.total_cases !== undefined && { total_failed_payments: metrics.total_cases }),
-        ...(metrics.pending_human_approval !== undefined && { pending_human_approval_count: metrics.pending_human_approval }),
-        ...(metrics.customer_self_recovered !== undefined && { customer_self_recovered_count: metrics.customer_self_recovered }),
-        ...(metrics.not_worth_recovering !== undefined && { not_worth_recovering_count: metrics.not_worth_recovering }),
-      });
-      
-      if (metrics.revenue_recovered && metrics.revenue_recovered > (prevRecoveredRef.current || 0)) {
-        setFlashCard('recovered');
-        setTimeout(() => setFlashCard(null), 500);
-        prevRecoveredRef.current = metrics.revenue_recovered;
-      }
-      
-      mutateOverview();
+    if (!metrics) return;
+    const base = localOverview || overview;
+    if (!base) return;
+
+    setLocalOverview({
+      ...base,
+      ...(metrics.revenue_at_risk !== undefined && { revenue_at_risk_paise: metrics.revenue_at_risk }),
+      ...(metrics.revenue_recovered !== undefined && { recovered_revenue_paise: metrics.revenue_recovered }),
+      ...(metrics.recovery_rate !== undefined && { recovery_rate_percent: metrics.recovery_rate }),
+      ...(metrics.total_cases !== undefined && { total_failed_payments: metrics.total_cases }),
+      ...(metrics.pending_human_approval !== undefined && { pending_human_approval_count: metrics.pending_human_approval }),
+      ...(metrics.customer_self_recovered !== undefined && { customer_self_recovered_count: metrics.customer_self_recovered }),
+      ...(metrics.not_worth_recovering !== undefined && { not_worth_recovering_count: metrics.not_worth_recovering }),
+    });
+
+    // Only flash + trigger a real re-fetch when recovered amount increases
+    if (metrics.revenue_recovered && metrics.revenue_recovered > prevRecoveredRef.current) {
+      setFlashCard('recovered');
+      setTimeout(() => setFlashCard(null), 500);
+      prevRecoveredRef.current = metrics.revenue_recovered;
+      mutateOverview();  // one real fetch per actual recovery event
     }
-  }, [metrics, overview, localOverview, mutateOverview]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metrics]); // ← only re-run when metrics changes, not when localOverview/overview change
 
   useEffect(() => {
     if (overview && !localOverview) {

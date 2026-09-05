@@ -369,8 +369,10 @@ func (h *DemoHandler) postWebhook(payload map[string]interface{}) error {
 	// Generate unique event ID
 	eventID := fmt.Sprintf("evt_demo_%s_%d", uuid.New().String()[:8], time.Now().Unix())
 
-	// Post to webhook endpoint (use localhost, not Docker service name)
-	webhookURL := fmt.Sprintf("http://localhost:%s/webhooks/razorpay", h.cfg.Port)
+	// Post to webhook endpoint (use Docker service name for internal communication)
+	// When running in Docker, the API container can reach itself via localhost
+	// But we need to use the container's internal network
+	webhookURL := fmt.Sprintf("http://127.0.0.1:%s/webhooks/razorpay", h.cfg.Port)
 	req, err := http.NewRequest("POST", webhookURL, bytes.NewBuffer(webhookPayload))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)

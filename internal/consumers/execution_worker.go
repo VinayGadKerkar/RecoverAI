@@ -258,6 +258,25 @@ func (ew *ExecutionWorker) executeRetry(ctx context.Context, razorpayPaymentID s
 		return nil, fmt.Errorf("mock retry failed: %w", err)
 	}
 
+	// DEMO_MODE: Guarantee success for transient errors (U30, U28, RB, BT) so
+	// Scenario A always shows ₹4,999 recovered — no random 25% failure in demos.
+	if !result.Success && ew.cfg.DemoMode {
+		switch errorCode {
+		case "U30", "U28", "RB", "BT":
+			slog.Info("DEMO_MODE: forcing retry success for transient error",
+				"payment_id", razorpayPaymentID,
+				"error_code", errorCode,
+			)
+			result.Success = true
+			result.NewStatus = "captured"
+			result.RazorpayResponse = fmt.Sprintf(
+				`{"id":"%s","status":"captured","amount":%d,"method":"upi","captured":true}`,
+				razorpayPaymentID,
+				amount,
+			)
+		}
+	}
+
 	// If retry succeeded, publish payment.captured webhook
 	if result.Success {
 		slog.Info("retry succeeded - publishing payment.captured webhook",
@@ -337,8 +356,9 @@ func (ew *ExecutionWorker) publishSuccessWebhook(paymentID string, amount int64,
 	mac.Write([]byte(webhookPayload))
 	signature := hex.EncodeToString(mac.Sum(nil))
 	
-	// Send webhook to our own API (use Docker service name, not localhost)
-	apiURL := "http://api:8080/webhooks/razorpay"
+	// Send webhook to our own API endpoint
+	// Uses 127.0.0.1 so it works both locally and inside Docker
+	apiURL := fmt.Sprintf("http://127.0.0.1:%s/webhooks/razorpay", ew.cfg.Port)
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer([]byte(webhookPayload)))
 	if err != nil {
 		slog.Error("failed to create webhook request", "error", err)
@@ -368,14 +388,19 @@ func (ew *ExecutionWorker) publishSuccessWebhook(paymentID string, amount int64,
 func (ew *ExecutionWorker) executePaymentLink(ctx context.Context, razorpayPaymentID string, params map[string]interface{}) (map[string]interface{}, error) {
 	slog.Info("generating payment link", "payment_id", razorpayPaymentID)
 	
-	// Load payment details
+	// Load payment details with customer info
 	var amount int64
 	var email, contact string
-	ew.db.QueryRow(ctx, `
-		SELECT p.amount, COALESCE(p.email, ''), COALESCE(p.contact, '')
+	err := ew.db.QueryRow(ctx, `
+		SELECT p.amount, COALESCE(c.email, ''), COALESCE(c.phone, '')
 		FROM payments p
+		LEFT JOIN customers c ON p.customer_id = c.id
 		WHERE p.razorpay_payment_id = $1
 	`, razorpayPaymentID).Scan(&amount, &email, &contact)
+	
+	if err != nil {
+		return nil, fmt.Errorf("load payment details: %w", err)
+	}
 
 	link, err := ew.razorpay.CreatePaymentLink(ctx, razorpayPaymentID, amount, "INR", email, contact)
 	if err != nil {

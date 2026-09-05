@@ -98,6 +98,9 @@ func (rp *ResultProcessor) processResult(ctx context.Context, payload []byte) er
 		} else {
 			finalStatus = "partially_recovered"
 		}
+	} else if result.Status == "success" && result.AmountRecovered == 0 {
+		// Payment link generated or action taken, but no money captured yet
+		finalStatus = "awaiting_payment"
 	} else if result.Status == "blocked" {
 		finalStatus = "stopped"
 	} else if result.Status == "requires_human" {
