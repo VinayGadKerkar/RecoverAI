@@ -1237,5 +1237,5 @@ See [`K6_LOAD_TEST_COMPLETE_SUMMARY.md`](K6_LOAD_TEST_COMPLETE_SUMMARY.md) for d
 **Status:** Production Ready  
 **Last Updated:** September 4, 2026
 
-Built with ❤️ for Razorpay Build — Track 03: AI Revenue Recovery
+Track 03: AI Revenue Recovery
 
